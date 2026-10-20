@@ -1,7 +1,20 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const REFERENCE_URL = '/assets/pumpkin-reference.svg';
 const REFERENCE_VIEWBOX = 1095;
-const LEGACY_SCALE = REFERENCE_VIEWBOX / 220;
+export const REFERENCE_DISPLAY_SIZE = 220;
+export const STAGE_SCALES = Object.freeze([0.58, 0.82, 1, 1.12]);
+// The supplied reference paths end at approximately this y coordinate; the
+// viewBox has transparent space below them. Anchor the visible artwork, not
+// that transparent viewBox space, to the logical ground point.
+const REFERENCE_ARTWORK_BOTTOM = 1041;
+// The reference artwork is slightly left-heavy inside the source viewBox.
+// Center the visible drawing in the logical square so the root box and the
+// artwork share the same horizontal anchor at every growth stage.
+const REFERENCE_ARTWORK_CENTER_X = 539.5;
+// The interaction box is the complete logical square. Stage size is applied
+// by the root SVG layout, not by a second transform on this rectangle.
+const REFERENCE_INTERACTION_BOX = Object.freeze({ x: 0, y: 0, width: REFERENCE_VIEWBOX, height: REFERENCE_VIEWBOX });
+const LEGACY_SCALE = REFERENCE_VIEWBOX / REFERENCE_DISPLAY_SIZE;
 // The first thirteen subpaths of the supplied yellow reference path are the
 // stray stem accent. They are intentionally omitted; the remaining yellow
 // body decoration is still kept in the reference layer.
@@ -151,6 +164,7 @@ export function createPumpkinSvg(pumpkin = {}) {
   const root = node('svg', {
     class: 'pumpkin-character', 'data-pumpkin-id': pumpkin.id || '', viewBox: '0 0 1095 1095',
     width: '1095', height: '1095', 'aria-label': pumpkin.displayName || 'Pumpkin', 'data-stage': stage,
+    'data-stage-scale': STAGE_SCALES[stage - 1],
   });
   const defs = node('defs');
   const glow = node('filter', { id: `pumpkin-glow-${pumpkin.id || 'new'}`, x: '-30%', y: '-30%', width: '160%', height: '160%' });
@@ -164,7 +178,6 @@ export function createPumpkinSvg(pumpkin = {}) {
   const bodyMotion = group('body-motion idle-body-motion');
   const bodyLook = group('body-look');
   const rocker = group('rocker idle-rocker');
-  const shadow = node('ellipse', { class: 'ground-shadow', cx: '548', cy: '1062', rx: '315', ry: '38', fill: '#24152d', opacity: '.28' });
   const layers = {
     fallback: referenceFallback(),
     body: group(`body pumpkin-body skin-${customization.skin}`),
@@ -201,16 +214,24 @@ export function createPumpkinSvg(pumpkin = {}) {
   else if (customization.prop === 'candle') accessory.append(node('rect', { x: '102', y: '42', width: '16', height: '33', rx: '5', fill: '#f1d49b', stroke: '#7d4c29', 'stroke-width': '3' }));
 
   rocker.append(face, hat, accessory);
-  const airPlanter = group('air-planter');
-  airPlanter.append(node('ellipse', { cx: '548', cy: '1035', rx: '235', ry: '35', fill: '#8d5a3a', opacity: '.38' }));
   bodyLook.append(rocker);
   bodyMotion.append(bodyLook);
   actor.append(bodyMotion);
-  const stageScale = [0.58, 0.82, 1, 1.12][stage - 1];
-  const stageTransform = `translate(${548 * (1 - stageScale)} ${548 * (1 - stageScale)}) scale(${stageScale})`;
+  // Keep the visible artwork anchored inside the root square. Growth scaling
+  // belongs to the root layout box; applying it again to these groups makes
+  // the visual artwork and the drag hitbox disagree at stages 1 and 4.
+  const stageTransform = `translate(${REFERENCE_VIEWBOX / 2 - REFERENCE_ARTWORK_CENTER_X} ${REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM})`;
   leafBed.setAttribute('transform', stageTransform);
   actor.setAttribute('transform', stageTransform);
-  floater.append(leafBed, actor); mover.append(shadow, airPlanter, floater); root.append(mover);
+  // The root SVG is the stage-sized logical square. Keep the hitbox in that
+  // same untransformed square so it cannot drift away from the visual box.
+  const interactionHitbox = node('rect', {
+    class: 'interaction-hitbox',
+    x: String(REFERENCE_INTERACTION_BOX.x), y: String(REFERENCE_INTERACTION_BOX.y),
+    width: String(REFERENCE_INTERACTION_BOX.width), height: String(REFERENCE_INTERACTION_BOX.height),
+    fill: 'transparent', 'pointer-events': 'all', 'aria-hidden': 'true',
+  });
+  floater.append(leafBed, actor); mover.append(floater, interactionHitbox); root.append(mover);
   return root;
 }
 

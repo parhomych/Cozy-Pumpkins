@@ -739,9 +739,64 @@ test('DonatEx failed WebSocket startup reports an integration error without affe
   assert.equal(adapter.connection, null);
   assert.deepEqual(statuses.slice(-2), [
     { provider: 'donatex', patch: { connectionStatus: 'Error', message: 'donatex_connection_closed' } },
-    { provider: 'donatex', patch: { connectionStatus: 'Error', message: 'donatex_connection_failed' } },
+    { provider: 'donatex', patch: { connectionStatus: 'Retrying', message: 'donatex_connection_failed' } },
   ]);
   assert.equal(statuses.some(({ provider }) => provider !== 'donatex'), false);
+  await adapter.stop();
+});
+
+test('DonatEx retries a failed initial start and reports Listening after recovery', async () => {
+  const statuses = [];
+  let attempts = 0;
+  const adapter = new DonatExEvents({
+    oauth: { getAccessToken: async () => 'private-donatex-token' },
+    onDonation() {},
+    statuses: { set: (provider, patch) => statuses.push({ provider, patch }) },
+    connectionFactory: () => ({
+      on() {},
+      onreconnecting() {},
+      onreconnected() {},
+      onclose() {},
+      start: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new TypeError('fetch failed');
+      },
+      stop: async () => {},
+    }),
+    retryDelays: [10],
+    logger: { warn() {} },
+  });
+
+  await assert.rejects(adapter.start(), /donatex_connection_failed/u);
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(attempts, 2);
+  assert.equal(statuses.at(-1).patch.connectionStatus, 'Listening');
+  await adapter.stop();
+});
+
+test('DonatEx stop cancels a scheduled initial-start retry', async () => {
+  let attempts = 0;
+  const adapter = new DonatExEvents({
+    oauth: { getAccessToken: async () => 'private-donatex-token' },
+    onDonation() {},
+    connectionFactory: () => ({
+      on() {},
+      onreconnecting() {},
+      onreconnected() {},
+      onclose() {},
+      start: async () => { attempts += 1; throw new TypeError('fetch failed'); },
+      stop: async () => {},
+    }),
+    retryDelays: [20],
+    logger: { warn() {} },
+  });
+
+  await assert.rejects(adapter.start(), /donatex_connection_failed/u);
+  await adapter.stop();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+
+  assert.equal(attempts, 1);
 });
 
 test('provider event normalizers map donation identity, amount, currency and message', async () => {

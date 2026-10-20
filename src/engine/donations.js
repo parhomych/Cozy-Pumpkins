@@ -70,7 +70,7 @@ export class DonationService {
       }
       const customization = parseCustomization(event.message, pumpkin.customization, settings.spawnCommand);
       const total = pumpkin.totalDonated + event.amount;
-      const stage = stageForTotal(total, this.config.thresholds); const patch = { totalDonated: total, stage, displayName: event.displayName, ownerNormalized: event.ownerNormalized };
+      const stage = stageForTotal(total, settings.growthThresholds); const patch = { totalDonated: total, stage, displayName: event.displayName, ownerNormalized: event.ownerNormalized };
       if (customization.recognized) patch.customization = customization.customization;
       pumpkin = this.db.updatePumpkin(pumpkin.id, patch);
       result = { duplicate: false, eventId: event.eventId, pumpkin: publicPumpkin(pumpkin), spawned, evolved: oldStage !== stage, previousStage: oldStage, currencyApplied: true };

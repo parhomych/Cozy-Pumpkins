@@ -127,6 +127,47 @@ test('spawn settings persist, reject invalid updates, and expose the read-only c
   }
 });
 
+test('growth thresholds use configured defaults, persist valid values, and reject invalid updates', async () => {
+  const config = testConfig();
+  const runtime = createServer({ config, db: new Database(':memory:'), publicDir: null });
+  await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+  const port = runtime.server.address().port;
+  try {
+    const firstRead = await request(port, '/api/settings');
+    const defaults = JSON.parse(firstRead.body);
+    assert.deepEqual(defaults.settings.growthThresholds, config.thresholds);
+    const cookie = firstRead.headers['set-cookie']?.[0]?.split(';')[0];
+    const validThresholds = { stage2: 350, stage3: 1200, stage4: 4500 };
+    const update = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ growthThresholds: validThresholds }),
+    });
+    assert.equal(update.status, 200);
+    assert.deepEqual(JSON.parse(update.body).settings.growthThresholds, validThresholds);
+
+    for (const invalid of [
+      { stage2: '', stage3: 1000, stage4: 3000 },
+      { stage2: -1, stage3: 1000, stage4: 3000 },
+      { stage2: 300, stage3: 300, stage4: 3000 },
+      { stage2: 500, stage3: 400, stage4: 3000 },
+      { stage2: 300, stage3: 1000 },
+    ]) {
+      const response = await request(port, '/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ growthThresholds: invalid }),
+      });
+      assert.equal(response.status, 400);
+    }
+    const finalRead = await request(port, '/api/settings');
+    assert.deepEqual(JSON.parse(finalRead.body).settings.growthThresholds, validThresholds);
+  } finally {
+    runtime.db.close();
+    await new Promise((resolve) => runtime.server.close(resolve));
+  }
+});
+
 test('Twitch reward catalog requires auth and returns only normalized public reward fields', async () => {
   const calls = [];
   const fetchImpl = async (url, options) => {

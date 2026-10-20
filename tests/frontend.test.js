@@ -4,12 +4,35 @@ import { readFile } from 'node:fs/promises';
 
 test('shared pumpkin artwork exposes independent reference layers and face parts', async () => {
   const source = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
-  for (const fragment of ["group('mover')", "group('floater')", "group('actor')", "group('leaf-bed-static')", "group('body-motion idle-body-motion')", "group('body-look')", "group('stem')", 'group(`body pumpkin-body', "group('leaves leaf-bed')", "group('highlights highlight-group')", 'group(`eyes eyes-', "group('eye eye-left')", "group('eye eye-right')", 'group(`mouth mouth-', 'hat hat-accessory', 'prop-accessory', "class: 'ground-shadow'"]) {
+  for (const fragment of ["group('mover')", "group('floater')", "group('actor')", "group('leaf-bed-static')", "group('body-motion idle-body-motion')", "group('body-look')", "group('stem')", 'group(`body pumpkin-body', "group('leaves leaf-bed')", "group('highlights highlight-group')", 'group(`eyes eyes-', "group('eye eye-left')", "group('eye eye-right')", 'group(`mouth mouth-', 'hat hat-accessory', 'prop-accessory']) {
     assert.ok(source.includes(fragment), `missing SVG layer fragment ${fragment}`);
   }
+  assert.doesNotMatch(source, /ground-shadow|air-planter/);
   const asset = await readFile(new URL('../public/assets/pumpkin-reference.svg', import.meta.url), 'utf8');
   assert.match(asset, /viewBox="0 0 1095 1095"/);
   assert.equal((asset.match(/<path\b/g) || []).length, 9);
+});
+
+test('shared pumpkin artwork anchors every growth stage to its bottom edge', async () => {
+  const source = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
+  assert.match(source, /const REFERENCE_ARTWORK_BOTTOM = 1041;/);
+  assert.match(source, /const REFERENCE_INTERACTION_BOX = Object\.freeze\(\{ x: 0, y: -54, width: REFERENCE_VIEWBOX, height: REFERENCE_VIEWBOX \}\);/);
+  assert.match(source, /translate\(\$\{548 \* \(1 - stageScale\)\} \$\{REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM \* stageScale\}\) scale\(\$\{stageScale\}\)/);
+  assert.doesNotMatch(source, /translate\(\$\{548 \* \(1 - stageScale\)\} \$\{REFERENCE_VIEWBOX \* \(1 - stageScale\)\}\) scale\(\$\{stageScale\}\)/);
+});
+
+test('admin interaction uses the transformed artwork hitbox instead of the shifted root square', async () => {
+  const svgSource = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
+  const cssSource = await readFile(new URL('../public/css/admin.css', import.meta.url), 'utf8');
+  const adminHtml = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
+  const overlayHtml = await readFile(new URL('../public/overlay.html', import.meta.url), 'utf8');
+  assert.match(svgSource, /class: 'interaction-hitbox'/);
+  assert.match(svgSource, /interactionHitbox\.setAttribute\('transform', stageTransform\)/);
+  assert.match(svgSource, /mover\.append\(floater, interactionHitbox\)/);
+  assert.match(cssSource, /\.scene-canvas \.pumpkin-character \{[\s\S]*pointer-events: none;/);
+  assert.match(cssSource, /\.scene-canvas \.pumpkin-character \.interaction-hitbox \{[\s\S]*pointer-events: all;/);
+  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=hitbox-20261021"/);
+  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=hitbox-20261021"/);
 });
 
 test('shared character includes smooth idle, face, stem, and cleanup animation hooks', async () => {
@@ -111,4 +134,36 @@ test('spawn rule controls and read-only keyword previews stay isolated from the 
   assert.match(renderer, /keywords/);
   assert.match(renderer, /destroy\(\)/);
   assert.doesNotMatch(renderer, /state\.socket|renderer\.sync|renderer\.update/);
+});
+
+test('admin workspace groups existing workflows with accessible disclosures and a square 16:9 preview', async () => {
+  const html = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
+  const css = await readFile(new URL('../public/css/admin.css', import.meta.url), 'utf8');
+  assert.match(html, /<details\b/);
+  assert.match(html, /<summary\b/);
+  for (const selector of [
+    'preview-frame', 'scene-canvas', 'clear-all', 'toggle-zone', 'zone-x', 'eye-frequency',
+    'mouth-frequency', 'refresh-twitch-rewards', 'save-reward-mapping', 'min-spawn-donation',
+    'spawn-command', 'customization-catalog', 'pumpkin-search', 'inspector-form',
+    'inspector-empty', 'display-name', 'twitch-username',
+  ]) assert.match(html, new RegExp(`id="${selector}"`), `missing existing workflow selector #${selector}`);
+  for (const group of ['Integrations', 'Scene settings', 'Donation spawn and growth rules', 'Customization', 'Pumpkin inspector']) {
+    assert.match(html, new RegExp(group, 'i'), `missing admin group ${group}`);
+  }
+  assert.match(css, /aspect-ratio:\s*16\s*\/\s*9/u);
+  assert.doesNotMatch(css, /\.preview-frame\s*\{[^}]*min-height\s*:/su);
+  const cornerRadii = [...css.matchAll(/border-radius:\s*([^;]+);/gu)].map((match) => match[1].trim());
+  assert.ok(cornerRadii.every((radius) => /^0(?:px)?$/u.test(radius)));
+  assert.doesNotMatch(css, /#c878ff|#302044|#ef7089/iu);
+  assert.match(css, /--bg:\s*#f0eee5/u);
+  assert.match(css, /--accent:\s*#8d4f24/u);
+  assert.match(css, /:focus-visible/u);
+  assert.match(css, /prefers-reduced-motion/u);
+  assert.match(css, /@media\s*\(max-width:\s*620px\)/u);
+  assert.match(css, /details:not\(\[open\]\)\s*>\s*:not\(summary\)\s*\{\s*display:\s*none;/u);
+});
+
+test('admin drag bounds allow the artwork to reach the bottom of the widget', async () => {
+  const source = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
+  assert.match(source, /const minY = height \+ padding; const maxY = SCENE_HEIGHT;/);
 });

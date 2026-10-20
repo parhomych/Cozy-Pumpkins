@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS settings (
   pumpkin_currency TEXT NOT NULL, reward_mapping_json TEXT NOT NULL,
   min_spawn_donation REAL NOT NULL DEFAULT 0 CHECK(min_spawn_donation >= 0),
   spawn_command TEXT NOT NULL DEFAULT '!тыковка',
+  growth_thresholds_json TEXT,
   animation_json TEXT NOT NULL DEFAULT '{"eyeFrequency":1,"mouthFrequency":1}', updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS auth_tokens (

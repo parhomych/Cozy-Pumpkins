@@ -1,6 +1,7 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js';
-import { PumpkinCharacter } from './shared/pumpkin-character.js';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=hitbox-20261021';
+import { PumpkinCharacter } from './shared/pumpkin-character.js?v=hitbox-20261021';
 import { eventToLogical, rectToCss, clamp } from './shared/coordinate-mapper.js';
+import { bindPersistentDisclosures } from './admin-disclosures.js';
 
 const SCENE_WIDTH = 1920;
 const SCENE_HEIGHT = 1080;
@@ -10,6 +11,8 @@ const REFERENCE_DISPLAY_SIZE = 220;
 const STAGE_SCALES = Object.freeze([0.58, 0.82, 1, 1.12]);
 const PUMPKIN_PADDING = 65;
 const DEFAULT_ANIMATION = Object.freeze({ eyeFrequency: 1, mouthFrequency: 1 });
+const DEFAULT_GROWTH_THRESHOLDS = Object.freeze({ stage2: 300, stage3: 1000, stage4: 3000 });
+const PREVIEW_CUSTOMIZATION = Object.freeze({ skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' });
 const ANIMATION_MIN = 0.1;
 const ANIMATION_MAX = 10;
 const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost']);
@@ -19,7 +22,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const canvas = $('#scene-canvas'); const previewFrame = $('#preview-frame'); const zoneElement = $('#nogo-zone');
 const renderer = new PumpkinRenderer(canvas, { interactive: true, onSelect: (id, pumpkin, event) => { selectPumpkin(id); if (event) beginDrag(id, event); } });
-const state = { pumpkins: new Map(), settings: { groundY: 980, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 }, animation: { ...DEFAULT_ANIMATION }, rewardMapping: { ...DEFAULT_REWARD_MAPPING }, pumpkinCurrency: 'RUB', minSpawnDonation: 0, spawnCommand: '!тыковка' }, customizationCatalog: [], catalogCharacters: [], twitchRewards: [], selectedId: null, socket: null, drag: null, zoneDrag: null, settingsSaveTimer: null, previewCharacter: null };
+const state = { pumpkins: new Map(), settings: { groundY: 980, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 }, animation: { ...DEFAULT_ANIMATION }, rewardMapping: { ...DEFAULT_REWARD_MAPPING }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS }, pumpkinCurrency: 'RUB', minSpawnDonation: 0, spawnCommand: '!тыковка' }, customizationCatalog: [], catalogCharacters: [], growthCharacters: [], growthDirty: false, twitchRewards: [], selectedId: null, socket: null, drag: null, zoneDrag: null, settingsSaveTimer: null, previewCharacter: null };
 
 function toast(message) { const el = $('#toast'); if (!el) return; el.textContent = message; el.classList.add('visible'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('visible'), 2600); }
 function setSocketState(label, kind = '') { $('#socket-status').textContent = label; const dot = $('#socket-dot'); dot.className = `status-dot ${kind}`; }
@@ -32,20 +35,45 @@ function animationFrequency(value, fallback) {
   return Number.isFinite(number) ? clamp(number, ANIMATION_MIN, ANIMATION_MAX) : fallback;
 }
 function renderSpawnSettings() { $('#min-spawn-donation').value = state.settings.minSpawnDonation ?? 0; $('#spawn-command').value = state.settings.spawnCommand || '!тыковка'; $('#spawn-currency').textContent = state.settings.pumpkinCurrency || 'RUB'; }
+function renderGrowthStages({ updateInputs = true } = {}) {
+  const currency = state.settings.pumpkinCurrency || 'RUB';
+  const thresholds = { ...DEFAULT_GROWTH_THRESHOLDS, ...(state.settings.growthThresholds || {}) };
+  $$('[data-growth-currency]').forEach((element) => { element.textContent = currency; });
+  state.growthCharacters.forEach((character) => character.destroy());
+  state.growthCharacters = [];
+  for (const stage of [1, 2, 3, 4]) {
+    const container = $(`#growth-stage-${stage}-preview`);
+    container.replaceChildren();
+    const character = new PumpkinCharacter({
+      id: `growth-stage-preview-${stage}`,
+      displayName: `Stage ${stage}`,
+      stage,
+      x: 110,
+      y: 220,
+      customization: PREVIEW_CUSTOMIZATION,
+    }, { interactive: false, positioning: 'local', previewSize: 90, animationSettings: state.settings.animation });
+    character.setPositionImmediate(110, 220, false);
+    character.root.setAttribute('aria-hidden', 'true');
+    container.append(character.root);
+    state.growthCharacters.push(character);
+  }
+  if (updateInputs && !state.growthDirty) {
+    for (const stage of [2, 3, 4]) $(`#growth-threshold-stage-${stage}`).value = thresholds[`stage${stage}`];
+  }
+}
 function renderCustomizationCatalog(catalog = []) {
   const container = $('#customization-catalog');
   state.catalogCharacters.forEach((character) => character.destroy());
   state.catalogCharacters = [];
   container.replaceChildren();
-  if (!Array.isArray(catalog)) return;
-  const labels = { skin: 'Skin', eyes: 'Eyes', mouth: 'Mouth', hat: 'Hat', prop: 'Prop' };
-  const defaults = { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' };
+  if (!Array.isArray(catalog)) catalog = [];
+  const labels = { skin: 'Skins', eyes: 'Eyes', mouth: 'Mouths', hat: 'Hats', prop: 'Props and accessories' };
   for (const group of catalog) {
-    if (!labels[group?.slot] || !Array.isArray(group.values)) continue;
+    if (typeof group?.slot !== 'string' || !Array.isArray(group.values)) continue;
     const section = document.createElement('section');
     section.className = 'catalog-group';
     const heading = document.createElement('h4');
-    heading.textContent = labels[group.slot];
+    heading.textContent = labels[group.slot] || group.label || group.slot.replace(/[_-]+/gu, ' ');
     section.append(heading);
     const grid = document.createElement('div');
     grid.className = 'catalog-grid';
@@ -55,23 +83,29 @@ function renderCustomizationCatalog(catalog = []) {
       option.className = 'catalog-option';
       const preview = document.createElement('div');
       preview.className = 'catalog-preview';
-      const character = new PumpkinCharacter({
-        id: `catalog-${group.slot}-${item.value}`,
-        stage: 2,
-        x: 110,
-        y: 220,
-        customization: { ...defaults, [group.slot]: item.value },
-      }, { interactive: false, positioning: 'local', animationSettings: state.settings.animation });
-      character.setPositionImmediate(110, 220, false);
-      character.root.setAttribute('aria-label', `${labels[group.slot]}: ${item.value}`);
-      preview.append(character.root);
-      state.catalogCharacters.push(character);
+      if (Object.hasOwn(PREVIEW_CUSTOMIZATION, group.slot)) {
+        const character = new PumpkinCharacter({
+          id: `catalog-${group.slot}-${item.value}`,
+          stage: 2,
+          x: 110,
+          y: 220,
+          customization: { ...PREVIEW_CUSTOMIZATION, [group.slot]: item.value },
+        }, { interactive: false, positioning: 'local', previewSize: 64, animationSettings: state.settings.animation });
+        character.setPositionImmediate(110, 220, false);
+        character.root.setAttribute('aria-label', `${heading.textContent}: ${item.value}`);
+        character.root.setAttribute('aria-hidden', 'true');
+        preview.append(character.root);
+        state.catalogCharacters.push(character);
+      } else {
+        preview.textContent = 'Preview unavailable';
+        preview.setAttribute('aria-hidden', 'true');
+      }
       const detail = document.createElement('div');
       const value = document.createElement('strong');
-      value.textContent = item.value;
+      value.textContent = item.label || item.value;
       const keywords = document.createElement('p');
       keywords.className = 'catalog-keywords';
-      keywords.textContent = item.keywords.join(' · ');
+      keywords.textContent = item.keywords.length ? item.keywords.join(' · ') : 'No donor keywords';
       detail.append(value, keywords);
       option.append(preview, detail);
       grid.append(option);
@@ -79,6 +113,29 @@ function renderCustomizationCatalog(catalog = []) {
     section.append(grid);
     container.append(section);
   }
+  const actionSection = document.createElement('section');
+  actionSection.className = 'catalog-group';
+  const actionHeading = document.createElement('h4');
+  actionHeading.textContent = 'Actions';
+  const actionGrid = document.createElement('div');
+  actionGrid.className = 'catalog-grid';
+  const actionIds = [...new Set([...REWARD_ACTIONS, ...$$('[data-animation]').map((button) => button.dataset.animation).filter(Boolean)])];
+  for (const action of actionIds) {
+    const option = document.createElement('article');
+    option.className = 'catalog-option';
+    option.dataset.actionChoice = action;
+    const detail = document.createElement('div');
+    const value = document.createElement('strong');
+    value.textContent = action.replace(/[_-]+/gu, ' ');
+    const keywords = document.createElement('p');
+    keywords.className = 'catalog-keywords';
+    keywords.textContent = 'Twitch reward action';
+    detail.append(value, keywords);
+    option.append(detail);
+    actionGrid.append(option);
+  }
+  actionSection.append(actionHeading, actionGrid);
+  container.append(actionSection);
 }
 async function loadSpawnSettings() {
   const status = $('#spawn-settings-state');
@@ -89,6 +146,7 @@ async function loadSpawnSettings() {
     state.settings = { ...state.settings, ...(body.settings || {}) };
     state.customizationCatalog = body.customizationCatalog || [];
     renderSpawnSettings();
+    renderGrowthStages();
     renderCustomizationCatalog(state.customizationCatalog);
     status.textContent = 'Spawn settings loaded.';
   } catch (error) {
@@ -118,6 +176,62 @@ async function saveSpawnSettings() {
     status.textContent = `Unable to save spawn settings: ${error.message}`;
   }
 }
+function readGrowthThresholds() {
+  const stages = [2, 3, 4];
+  const inputs = stages.map((stage) => $(`#growth-threshold-stage-${stage}`));
+  const rawValues = inputs.map((input) => input.value.trim());
+  const values = rawValues.map(Number);
+  const invalid = new Set();
+  for (let index = 0; index < values.length; index += 1) {
+    if (!rawValues[index] || !Number.isFinite(values[index]) || values[index] < 0) invalid.add(index);
+  }
+  for (let index = 1; index < values.length; index += 1) {
+    if (Number.isFinite(values[index - 1]) && Number.isFinite(values[index]) && values[index] <= values[index - 1]) {
+      invalid.add(index - 1);
+      invalid.add(index);
+    }
+  }
+  inputs.forEach((input, index) => {
+    const message = invalid.has(index) ? 'Enter a non-negative threshold in strictly increasing order.' : '';
+    input.setCustomValidity(message);
+    if (message) input.setAttribute('aria-invalid', 'true');
+    else input.removeAttribute('aria-invalid');
+  });
+  if (invalid.size) {
+    const fields = [...invalid].map((index) => `stage ${stages[index]}`).join(', ');
+    $('#growth-settings-state').textContent = `Check ${fields}: amounts must be finite, non-negative, and strictly increasing.`;
+    return null;
+  }
+  return { stage2: values[0], stage3: values[1], stage4: values[2] };
+}
+async function saveGrowthSettings() {
+  const thresholds = readGrowthThresholds();
+  if (!thresholds) return;
+  const button = $('#save-growth-settings');
+  const status = $('#growth-settings-state');
+  button.disabled = true;
+  status.textContent = 'Saving growth rules…';
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ growthThresholds: thresholds }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || 'growth_threshold_save_failed');
+    if (!body.settings?.growthThresholds) throw new Error('growth_threshold_save_failed');
+    state.settings = { ...state.settings, ...body.settings };
+    state.growthDirty = false;
+    renderGrowthStages();
+    status.textContent = 'Growth rules saved.';
+  } catch (error) {
+    status.textContent = error.message === 'invalid_growth_thresholds'
+      ? 'The server rejected these growth rules. Check that all three amounts increase.'
+      : `Unable to save growth rules: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+}
 function zone() { return state.settings.noGoZone || { enabled: false, x: 0, y: 0, width: 0, height: 0 }; }
 function renderZone() {
   const current = zone(); zoneElement.classList.toggle('enabled', Boolean(current.enabled && current.width > 0 && current.height > 0));
@@ -140,10 +254,10 @@ function pumpkinDimensions(pumpkin) {
 }
 function localSafePosition(p, x, y) {
   const { width, height } = pumpkinDimensions(p); const half = width / 2; const padding = PUMPKIN_PADDING;
-  // Horizontal scene edges use the artwork edge; padding remains in the
-  // vertical ground limits and No-Go Zone collision test below.
+  // Scene edges use the artwork edge; padding remains only in the No-Go Zone
+  // collision test below.
   const minX = half; const maxX = SCENE_WIDTH - half;
-  const minY = height + padding; const maxY = SCENE_HEIGHT - padding;
+  const minY = height + padding; const maxY = SCENE_HEIGHT;
   const requestedX = Number.isFinite(Number(x)) ? Number(x) : minX;
   const requestedY = Number.isFinite(Number(y)) ? Number(y) : maxY;
   let nextX = clamp(requestedX, minX, maxX); let nextY = clamp(requestedY, minY, maxY);
@@ -166,7 +280,7 @@ function renderInspector() {
   if (!p) { $('#character-preview').replaceChildren(); state.previewCharacter?.destroy(); state.previewCharacter = null; return; }
   $('#owner-name').textContent = displayName(p); $('#total-donated').textContent = `${Number(p.totalDonated || 0).toLocaleString()} ${p.currency || ''}`; $('#display-name').value = p.displayName || ''; $('#twitch-username').value = p.twitchUsername || '';
   const customization = p.customization || {}; for (const select of $$('[data-slot]')) select.value = customization[select.dataset.slot] || select.options[0]?.value;
-  state.previewCharacter?.destroy(); state.previewCharacter = new PumpkinCharacter({ ...p, x: 110, y: 150 }, { interactive: false, positioning: 'local', animationSettings: state.settings.animation }); state.previewCharacter.setPositionImmediate(110, 150, false); $('#character-preview').append(state.previewCharacter.root); state.previewCharacter.startIdle();
+  state.previewCharacter?.destroy(); state.previewCharacter = new PumpkinCharacter({ ...p, x: 110, y: 150 }, { interactive: false, positioning: 'local', previewSize: 130, animationSettings: state.settings.animation }); state.previewCharacter.setPositionImmediate(110, 150, false); $('#character-preview').append(state.previewCharacter.root); state.previewCharacter.startIdle();
 }
 function renderAnimationSettings() { const animation = { ...DEFAULT_ANIMATION, ...(state.settings.animation || {}) }; $('#eye-frequency').value = animation.eyeFrequency; $('#mouth-frequency').value = animation.mouthFrequency; renderer.setSettings({ animation }); state.previewCharacter?.setAnimationSettings(animation).restartIdle(); }
 function renderRewardMapping() {
@@ -258,12 +372,19 @@ function moveZone(event) { const drag = state.zoneDrag; if (!drag) return; const
 }
 function endZone() { if (!state.zoneDrag) return; try { previewFrame.releasePointerCapture(state.zoneDrag.pointerId); } catch {} state.zoneDrag = null; }
 function updateProviderCard(value) { if (!value?.provider) return; const card = document.querySelector(`[data-provider="${value.provider}"]`); if (!card) return; const wasConnected = card.dataset.authenticated === 'true'; const providerNames = { twitch: 'Twitch', donationalerts: 'DonationAlerts', donatex: 'DonatEx', memealerts: 'Meme Alerts' }; const providerName = providerNames[value.provider] || value.provider; const disconnected = 'Disconnected'; $('[data-auth-status]', card).textContent = value.authStatus || disconnected; $('[data-connection-status]', card).textContent = value.connectionStatus || disconnected; $('[data-account]', card).textContent = value.account || '—'; $('[data-provider-message]', card).textContent = value.message || ''; const button = $('.provider-action', card); const connected = value.authStatus === 'Connected'; card.dataset.authenticated = connected ? 'true' : 'false'; button.textContent = `${connected ? 'Disconnect' : 'Connect'} ${providerName}`; button.dataset.connected = connected ? 'true' : 'false'; if (value.provider === 'twitch' && connected && !wasConnected) void loadTwitchRewards(); }
-function handleScene(scene = {}) { state.pumpkins.clear(); state.settings = { ...state.settings, ...(scene.settings || {}), animation: { ...DEFAULT_ANIMATION, ...(scene.settings?.animation || {}) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(scene.settings?.rewardMapping || {}) } }; renderer.setSettings(state.settings); for (const p of scene.pumpkins || []) state.pumpkins.set(p.id, p); renderer.sync([...state.pumpkins.values()]); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderSearch(); renderInspector(); for (const status of scene.authStatus || []) updateProviderCard(status); }
+function handleScene(scene = {}) { state.pumpkins.clear(); state.settings = { ...state.settings, ...(scene.settings || {}), animation: { ...DEFAULT_ANIMATION, ...(scene.settings?.animation || {}) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(scene.settings?.rewardMapping || {}) }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS, ...(scene.settings?.growthThresholds || {}) } }; renderer.setSettings(state.settings); for (const p of scene.pumpkins || []) state.pumpkins.set(p.id, p); renderer.sync([...state.pumpkins.values()]); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages(); renderSearch(); renderInspector(); for (const status of scene.authStatus || []) updateProviderCard(status); }
 async function providerAction(provider, connected) { const path = `/api/auth/${provider}/${connected ? 'logout' : ''}`.replace(/\/$/, ''); if (!connected) { window.location.assign(`/api/auth/${provider}`); return; } try { const response = await fetch(path, { method: 'POST', headers: { 'Accept': 'application/json' } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'logout_failed'); toast(`${provider} disconnected locally`); } catch (error) { toast(error.message); } }
 function connectSocket() { if (typeof globalThis.io !== 'function') { setSocketState('Socket.IO unavailable', 'error'); return; } const socket = globalThis.io(); state.socket = socket; socket.on('connect', () => setSocketState('Live', 'live')); socket.on('disconnect', () => { setSocketState('Reconnecting…', 'warn'); if (state.drag) endDrag(); }); socket.on('connect_error', () => setSocketState('Reconnecting…', 'warn')); socket.io?.on('reconnect_attempt', () => setSocketState('Reconnecting…', 'warn'));
-    socket.on('scene:init', handleScene); socket.on('integration:status', updateProviderCard); socket.on('pumpkin:spawned', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:updated', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:move', (payload) => { if (!state.drag || state.drag.id !== payload.id) renderer.applyMove(payload); }); socket.on('pumpkin:move-ended', (payload) => { renderer.finishMove(payload); const p = state.pumpkins.get(payload.id); if (p) state.pumpkins.set(payload.id, { ...p, x: payload.x, y: payload.y }); }); socket.on('pumpkin:evolved', ({ id, stage, totalDonated }) => { const p = state.pumpkins.get(id); if (p) { p.stage = stage; p.totalDonated = totalDonated; upsertPumpkin(p); } }); socket.on('pumpkin:action', (payload) => renderer.action(payload.id, payload.action, payload)); socket.on('pumpkin:deleted', ({ id }) => { removePumpkin(id); renderSearch(); toast('Pumpkin deleted'); }); socket.on('pumpkin:cleared', () => { state.pumpkins.clear(); renderer.clear(); selectPumpkin(null); renderSearch(); toast('Scene cleared'); }); socket.on('settings:updated', ({ settings } = {}) => { state.settings = { ...state.settings, ...(settings || {}), animation: { ...DEFAULT_ANIMATION, ...(settings?.animation || state.settings.animation) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(settings?.rewardMapping || state.settings.rewardMapping) } }; renderer.setSettings(state.settings); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); if (settings?.rewardMapping) $('#reward-mapping-state').textContent = 'Reward mapping saved.'; }); socket.on('settings:nogo-updated', ({ noGoZone }) => { setZone(noGoZone, { persist: false }); }); socket.on('operation:error', ({ message }) => { if (message === 'invalid_reward_mapping') { $('#reward-mapping-state').textContent = 'Invalid reward mapping.'; renderRewardMapping(); } else if (message === 'invalid_min_spawn_donation' || message === 'invalid_spawn_command') $('#spawn-settings-state').textContent = message; else $('#reward-mapping-state').textContent = $('#reward-mapping-state').textContent; toast(message || 'Operation rejected by server'); }); }
+    socket.on('scene:init', handleScene); socket.on('integration:status', updateProviderCard); socket.on('pumpkin:spawned', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:updated', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:move', (payload) => { if (!state.drag || state.drag.id !== payload.id) renderer.applyMove(payload); }); socket.on('pumpkin:move-ended', (payload) => { renderer.finishMove(payload); const p = state.pumpkins.get(payload.id); if (p) state.pumpkins.set(payload.id, { ...p, x: payload.x, y: payload.y }); }); socket.on('pumpkin:evolved', ({ id, stage, totalDonated }) => { const p = state.pumpkins.get(id); if (p) { p.stage = stage; p.totalDonated = totalDonated; upsertPumpkin(p); } }); socket.on('pumpkin:action', (payload) => renderer.action(payload.id, payload.action, payload)); socket.on('pumpkin:deleted', ({ id }) => { removePumpkin(id); renderSearch(); toast('Pumpkin deleted'); }); socket.on('pumpkin:cleared', () => { state.pumpkins.clear(); renderer.clear(); selectPumpkin(null); renderSearch(); toast('Scene cleared'); }); socket.on('settings:updated', ({ settings } = {}) => { state.settings = { ...state.settings, ...(settings || {}), animation: { ...DEFAULT_ANIMATION, ...(settings?.animation || state.settings.animation) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(settings?.rewardMapping || state.settings.rewardMapping) }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS, ...(settings?.growthThresholds || state.settings.growthThresholds) } }; renderer.setSettings(state.settings); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages({ updateInputs: !state.growthDirty }); if (settings?.rewardMapping) $('#reward-mapping-state').textContent = 'Reward mapping saved.'; }); socket.on('settings:nogo-updated', ({ noGoZone }) => { setZone(noGoZone, { persist: false }); }); socket.on('operation:error', ({ message }) => { if (message === 'invalid_reward_mapping') { $('#reward-mapping-state').textContent = 'Invalid reward mapping.'; renderRewardMapping(); } else if (message === 'invalid_min_spawn_donation' || message === 'invalid_spawn_command') $('#spawn-settings-state').textContent = message; else if (message === 'invalid_growth_thresholds') $('#growth-settings-state').textContent = 'The server rejected these growth rules. Check that all three amounts increase.'; toast(message || 'Operation rejected by server'); }); }
 function wireUI() {
   $('#save-spawn-settings').addEventListener('click', saveSpawnSettings);
+  $('#save-growth-settings').addEventListener('click', () => void saveGrowthSettings());
+  $$('[id^="growth-threshold-stage-"]').forEach((input) => input.addEventListener('input', () => {
+    state.growthDirty = true;
+    input.setCustomValidity('');
+    input.removeAttribute('aria-invalid');
+    $('#growth-settings-state').textContent = '';
+  }));
   $('#pumpkin-search').addEventListener('input', renderSearch); $('#pumpkin-search').addEventListener('focus', renderSearch); document.addEventListener('click', (event) => { if (!event.target.closest('.search-wrap')) $('#search-results').classList.remove('open'); });
   canvas.addEventListener('pointermove', moveDrag); canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag); window.addEventListener('blur', endDrag);
   zoneElement.addEventListener('pointerdown', beginZone); $$('.resize-handle', zoneElement).forEach((handle) => handle.addEventListener('pointerdown', beginResize)); previewFrame.addEventListener('pointermove', moveZone); previewFrame.addEventListener('pointerup', endZone); previewFrame.addEventListener('pointercancel', endZone);
@@ -279,4 +400,5 @@ function wireUI() {
   $('#simulate-donation').addEventListener('click', async () => { try { const response = await fetch('/api/dev/donation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: `dev-${Date.now()}`, name: $('#sim-name').value, amount: Number($('#sim-amount').value), currency: state.settings.pumpkinCurrency || 'RUB', message: state.settings.spawnCommand || '!тыковка' }) }); if (!response.ok) throw new Error('simulator_unavailable'); toast('Test donation sent'); } catch (error) { toast(error.message); } });
 }
 async function loadStatus() { try { const response = await fetch('/api/status'); const data = await response.json(); for (const item of data.integrations || []) updateProviderCard(item); const exposed = data.devSimulator || data.features?.donationSimulator; if (exposed) $('#simulator').hidden = false; } catch { /* Socket.IO remains the source of live state. */ } }
-wireUI(); connectSocket(); loadStatus(); loadSpawnSettings(); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings();
+bindPersistentDisclosures($$('details'));
+wireUI(); connectSocket(); loadStatus(); loadSpawnSettings(); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages();

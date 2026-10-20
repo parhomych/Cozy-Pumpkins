@@ -2,6 +2,7 @@ import { HttpTransportType, HubConnectionBuilder } from '@microsoft/signalr';
 
 export const DONATEX_HUB_ENDPOINT = 'https://donatex.gg/api/public-donations-hub';
 const RECONNECT_DELAYS = [0, 2000, 5000, 10000, 30000];
+const START_RETRY_DELAYS = [2000, 5000, 15000];
 
 function safeError(error, fallback) {
   const name = String(error?.name ?? '').toLowerCase();
@@ -42,9 +43,15 @@ export class DonatExEvents {
     statuses,
     connectionFactory = createHubConnection,
     logger = console,
+    retryDelays = START_RETRY_DELAYS,
   } = {}) {
-    Object.assign(this, { oauth, onDonation, statuses, connectionFactory, logger });
+    Object.assign(this, { oauth, onDonation, statuses, connectionFactory, logger, retryDelays });
     this.connection = null;
+    this.startingConnection = null;
+    this.startPromise = null;
+    this.retryTimer = null;
+    this.retryAttempt = 0;
+    this.stopped = false;
     this.seenDonationIds = new Set();
     this.pendingDonationIds = new Set();
   }
@@ -70,6 +77,36 @@ export class DonatExEvents {
 
   async start() {
     if (this.connection) return;
+    if (this.startPromise) return this.startPromise;
+    this.stopped = false;
+    this.startPromise = this.startConnection();
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  scheduleStartRetry(reason) {
+    if (this.stopped || this.retryTimer) return;
+    const delay = this.retryDelays[this.retryAttempt++];
+    if (delay === undefined) {
+      this.statuses?.set('donatex', { connectionStatus: 'Error', message: reason });
+      return;
+    }
+    this.statuses?.set('donatex', { connectionStatus: 'Retrying', message: reason });
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.start().catch((error) => {
+        this.logger.warn('DonatEx connection retry failed.', {
+          provider: 'donatex',
+          reason: safeError(error, 'donatex_connection_failed'),
+        });
+      });
+    }, delay);
+  }
+
+  async startConnection() {
     const connection = this.connectionFactory(
       DONATEX_HUB_ENDPOINT,
       () => this.oauth.getAccessToken('donatex'),
@@ -77,6 +114,7 @@ export class DonatExEvents {
       { transport: HttpTransportType.WebSockets },
     );
     this.connection = connection;
+    this.startingConnection = connection;
     connection.on('DonationCreated', (event) => { void this.dispatchDonation(event); });
     connection.on('DonationRerun', (event) => { void this.dispatchDonation(event); });
     connection.onreconnecting(() => {
@@ -96,17 +134,29 @@ export class DonatExEvents {
     this.statuses?.set('donatex', { connectionStatus: 'Retrying', message: null });
     try {
       await connection.start();
-      if (this.connection === connection) this.statuses?.set('donatex', { connectionStatus: 'Listening', message: null });
+      if (this.startingConnection === connection) this.startingConnection = null;
+      if (this.connection === connection) {
+        this.retryAttempt = 0;
+        this.statuses?.set('donatex', { connectionStatus: 'Listening', message: null });
+      }
     } catch (error) {
+      const isCurrentAttempt = this.connection === connection || this.startingConnection === connection;
       if (this.connection === connection) this.connection = null;
-      this.statuses?.set('donatex', { connectionStatus: 'Error', message: safeError(error, 'donatex_connection_failed') });
-      throw new Error(safeError(error, 'donatex_connection_failed'));
+      if (this.startingConnection === connection) this.startingConnection = null;
+      const reason = safeError(error, 'donatex_connection_failed');
+      if (isCurrentAttempt) this.scheduleStartRetry(reason);
+      throw new Error(reason);
     }
   }
 
   async stop() {
+    this.stopped = true;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retryAttempt = 0;
     const connection = this.connection;
     this.connection = null;
+    this.startingConnection = null;
     if (connection) await connection.stop();
     this.statuses?.set('donatex', { connectionStatus: 'Disconnected', message: null });
   }

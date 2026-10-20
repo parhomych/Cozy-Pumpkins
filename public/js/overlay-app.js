@@ -1,4 +1,4 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=hitbox-20261021';
 
 const connectionPill = document.querySelector('#connection-state');
 const canvas = document.querySelector('#overlay-scene');

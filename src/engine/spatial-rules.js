@@ -37,9 +37,9 @@ export function isPositionValid(pumpkin, x, y, { scene, noGoZone }) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
   const artwork = artworkBounds(pumpkin, x, y);
   const bounds = pumpkinBounds(pumpkin, x, y, scene);
-  // The artwork itself may meet the horizontal scene edges. Keep the vertical
-  // ground/padding limits and the padded bounds used for No-Go Zone protection.
-  if (artwork.left < 0 || artwork.right > scene.width || bounds.top < 0 || bounds.bottom > scene.height) return false;
+  // The artwork may meet every scene edge. Keep padding for No-Go Zone
+  // protection, but do not turn it into an invisible gap at the widget edge.
+  if (artwork.left < 0 || artwork.right > scene.width || artwork.top < 0 || artwork.bottom > scene.height) return false;
   if (noGoZone?.enabled) {
     const zone = { left: noGoZone.x, right: noGoZone.x + noGoZone.width, top: noGoZone.y, bottom: noGoZone.y + noGoZone.height };
     if (rectanglesOverlap(bounds, zone)) return false;
@@ -49,7 +49,7 @@ export function isPositionValid(pumpkin, x, y, { scene, noGoZone }) {
 export function clampPosition(pumpkin, x, y, context) {
   const { scene } = context; const size = dimensionsFor(pumpkin); const padding = scene.padding;
   const minX = size.width / 2; const maxX = scene.width - minX;
-  const minY = size.height + padding; const maxY = scene.height - padding;
+  const minY = size.height + padding; const maxY = scene.height;
   let candidate = { x: Math.max(minX, Math.min(maxX, Number(x) || minX)), y: Math.max(minY, Math.min(maxY, Number(y) || maxY)) };
   if (isPositionValid(pumpkin, candidate.x, candidate.y, context)) return candidate;
   const z = context.noGoZone;

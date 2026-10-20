@@ -1,4 +1,4 @@
-import { PumpkinCharacter } from './pumpkin-character.js';
+import { PumpkinCharacter } from './pumpkin-character.js?v=hitbox-20261021';
 
 export class PumpkinRenderer {
   constructor(container, { interactive = false, onSelect = null, settings = null } = {}) {
@@ -13,8 +13,10 @@ export class PumpkinRenderer {
   }
   update(pumpkin, { immediate = false } = {}) {
     const character = this.characters.get(pumpkin?.id); if (!character) return this.add(pumpkin, { immediate: true });
+    const previousStage = character.data.stage;
     character.data = { ...character.data, ...pumpkin, customization: pumpkin.customization || character.data.customization };
     if (pumpkin.customization) character.applyCustomization(pumpkin.customization);
+    if (pumpkin.stage !== undefined && Number(pumpkin.stage) !== Number(previousStage)) character.evolve(pumpkin.stage);
     character.moveTo(pumpkin.x, pumpkin.y, { immediate, isAirborne: pumpkin.isAirborne }); return character;
   }
   setSettings(settings = {}) {

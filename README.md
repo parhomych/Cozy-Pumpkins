@@ -37,7 +37,9 @@ Set each redirect URI to the URL registered with that provider; the defaults sho
 
 DonationAlerts and Meme Alerts logout disconnects and deletes the local token; it does not claim that the provider revoked access remotely. DonatEx remote revocation is reported only when the provider confirms it. The Twitch login and Channel Points controls remain independent of donation connections.
 
-In **Donation spawn rules**, set the minimum donation in the configured scene currency and the command required at the start of a message. Defaults are `0` and `!тыковка`. New viewers need one same-currency donation meeting the threshold plus the command to create a pumpkin; listed Russian/English customization keywords after the command set its appearance. Existing owners' same-currency donations continue to grow their pumpkin without the command. Other currencies are not converted or counted. The adjacent catalog shows each supported appearance keyword and an isolated visual preview.
+In **Donation spawn and growth rules**, set the minimum donation in the configured scene currency and the command required at the start of a message. Defaults are `0` and `!тыковка`. New viewers need one same-currency donation meeting the threshold plus the command to create a pumpkin; listed Russian/English customization keywords after the command set its appearance. Existing owners' same-currency donations continue to grow their pumpkin without the command. Other currencies are not converted or counted.
+
+The same section shows four isolated pumpkin previews and cumulative donor-total thresholds for stages two through four. Defaults are `300`, `1000`, and `3000` in the scene currency. Values must be finite, non-negative, and strictly increasing. These saved thresholds control donation-driven evolution and are separate from the minimum amount for creating a pumpkin. Dense integration, scene, reward, and inspector controls can be collapsed without clearing their current values. The **Live preview** stays visible in a responsive 16:9 frame.
 
 ## Run
 

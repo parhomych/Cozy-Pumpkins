@@ -1,9 +1,11 @@
-import { createPumpkinSvg, normalizeCustomization } from './pumpkin-svg.js';
+import { createPumpkinSvg, normalizeCustomization, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=hitbox-20261021';
 
 const getGsap = () => globalThis.gsap || globalThis.window?.gsap || null;
 const wait = (fn, ms) => setTimeout(fn, ms);
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const SCENE_WIDTH = 1920;
+const SCENE_HEIGHT = 1080;
 const REFERENCE_FACE_ORIGIN = '548 665';
 const REFERENCE_BODY_ORIGIN = '548 1035';
 const BLINK_DELAY_MIN = 9000;
@@ -14,8 +16,9 @@ const DEFAULT_ANIMATION = Object.freeze({ eyeFrequency: 1, mouthFrequency: 1 });
 
 /** One independently animated pumpkin. Positioning lives on .mover; idle body motion is below the inert .floater wrapper. */
 export class PumpkinCharacter {
-  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene', animationSettings = null } = {}) {
+  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene', animationSettings = null, previewSize = null } = {}) {
     this.positioning = positioning;
+    this.previewSize = Number.isFinite(Number(previewSize)) ? Number(previewSize) : null;
     this.animationSettings = { ...DEFAULT_ANIMATION, ...(animationSettings || {}) };
     this.data = { ...pumpkin, customization: normalizeCustomization(pumpkin.customization) };
     this.root = createPumpkinSvg(this.data);
@@ -34,6 +37,7 @@ export class PumpkinCharacter {
     this.actionTweens = new Set();
     this.lastMoveSequence = -1;
 
+    this._applyStageGeometry(this.data.stage);
     this.setPositionImmediate(this.x, this.y, this.isAirborne);
     this._context = getGsap()?.context?.(() => {}, this.root) || null;
   }
@@ -46,7 +50,6 @@ export class PumpkinCharacter {
     this.bodyMotion = this.root.querySelector('.body-motion');
     this.bodyLook = this.root.querySelector('.body-look');
     this.rocker = this.root.querySelector('.rocker');
-    this.shadow = this.root.querySelector('.ground-shadow');
     this.body = this.root.querySelector('.body');
     this.stem = this.root.querySelector('.stem');
     this.faceMask = this.root.querySelector('.face-mask');
@@ -115,15 +118,37 @@ export class PumpkinCharacter {
     if (gsap && targets) gsap.killTweensOf(targets);
   }
 
+  _applyStageGeometry(stage = this.data.stage) {
+    const rawStage = Number(stage);
+    const normalizedStage = Number.isFinite(rawStage) ? clamp(Math.round(rawStage), 1, STAGE_SCALES.length) : 1;
+    const stageScale = STAGE_SCALES[normalizedStage - 1];
+    const stageSize = REFERENCE_DISPLAY_SIZE * stageScale;
+    this.stage = normalizedStage;
+    this.stageScale = stageScale;
+    this.stageSize = stageSize;
+    this.data.stage = normalizedStage;
+    this.root.dataset.stage = String(normalizedStage);
+    this.root.dataset.stageScale = String(stageScale);
+    this.root.style.setProperty('--pumpkin-stage-size', `${stageSize}px`);
+    this.root.style.setProperty('--pumpkin-stage-size-percent', `${stageSize / SCENE_WIDTH * 100}%`);
+    if (this.positioning === 'local' && this.previewSize !== null) {
+      this.root.style.setProperty('--pumpkin-preview-size', `${this.previewSize * stageScale}px`);
+    } else {
+      this.root.style.removeProperty('--pumpkin-preview-size');
+    }
+    return this;
+  }
+
   _setPosition(x, y) {
     this.x = Number(x) || 0;
     this.y = Number(y) || 0;
+    const stageSize = this.stageSize || REFERENCE_DISPLAY_SIZE;
     if (this.positioning === 'scene') {
-      this.root.style.left = `${(this.x - 110) / 1920 * 100}%`;
-      this.root.style.top = `${(this.y - 220) / 1080 * 100}%`;
+      this.root.style.left = `${(this.x - stageSize / 2) / SCENE_WIDTH * 100}%`;
+      this.root.style.top = `${(this.y - stageSize) / SCENE_HEIGHT * 100}%`;
       this.mover?.setAttribute('transform', 'translate(0 0)');
     } else {
-      this.mover?.setAttribute('transform', `translate(${this.x - 110} ${this.y - 220})`);
+      this.mover?.setAttribute('transform', `translate(${this.x - REFERENCE_DISPLAY_SIZE / 2} ${this.y - REFERENCE_DISPLAY_SIZE})`);
     }
   }
 
@@ -160,6 +185,7 @@ export class PumpkinCharacter {
     this.root.replaceChildren(...[...next.childNodes]);
     this.root.setAttribute('aria-label', this.data.displayName || 'Pumpkin');
     this._bindLayers();
+    this._applyStageGeometry(this.data.stage);
     this._setPosition(this.x, this.y);
     if (wasIdle) this.startIdle();
     return this;
@@ -447,8 +473,8 @@ export class PumpkinCharacter {
   }
 
   evolve(newStage) {
-    this.data.stage = newStage;
-    this.root.dataset.stage = newStage;
+    this._applyStageGeometry(newStage);
+    this._setPosition(this.x, this.y);
     const gsap = this._gsap();
     if (gsap) this._trackAction(gsap.fromTo(this.root, { scale: .7, opacity: .4 }, { scale: 1, opacity: 1, duration: .5, ease: 'back.out(2)', overwrite: 'auto' }));
     return this;

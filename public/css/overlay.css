@@ -2,7 +2,7 @@ html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background:
 body { font-family: system-ui, sans-serif; }
 .overlay-root { position: relative; width: 100vw; height: 100vh; pointer-events: none; overflow: hidden; }
 .pumpkin-layer { position: absolute; inset: 0; width: 100%; height: 100%; }
-.pumpkin-character { position: absolute; left: 0; top: 0; width: 11.458333%; height: auto; aspect-ratio: 1; overflow: visible; transform-origin: center bottom; pointer-events: none; }
+.pumpkin-character { position: absolute; left: 0; top: 0; width: min(var(--pumpkin-stage-size, 220px), var(--pumpkin-stage-size-percent, 11.458333%)); height: auto; aspect-ratio: 1; overflow: visible; transform-origin: center bottom; pointer-events: none; }
 .pumpkin-character { will-change: transform; }
 .pumpkin-character .mover, .pumpkin-character .floater, .pumpkin-character .actor, .pumpkin-character .leaf-bed-static, .pumpkin-character .body-motion, .pumpkin-character .body-look, .pumpkin-character .rocker, .pumpkin-character .stem, .pumpkin-character .body, .pumpkin-character .face, .pumpkin-character .eyes, .pumpkin-character .mouth { transform-box: fill-box; transform-origin: center bottom; }
 .pumpkin-character.is-airborne .ground-shadow { opacity: .18; transform: scaleX(.66); transform-origin: center; }

@@ -10,7 +10,7 @@ import { sanitizeCustomization } from '../engine/customization-parser.js';
 import { animationPatch } from '../engine/animation.js';
 import { rewardMappingPatch } from '../engine/rewards.js';
 import { customizationCatalog } from '../engine/customization-parser.js';
-import { validateSpawnSettings } from '../engine/donation-settings.js';
+import { validateGrowthThresholds, validateSpawnSettings } from '../engine/donation-settings.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 function safeError(res, error, fallback = 'request_failed') { const code = error?.message && /^[a-z0-9_]+$/i.test(error.message) ? error.message : fallback; return res.status(code.includes('required') ? 401 : 400).json({ error: code }); }
@@ -20,7 +20,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
   router.get('/status', (req, res) => res.json({ ok: true, config: publicConfig(config), integrations: statusesPayload(statuses), devSimulator: config.nodeEnv !== 'production', serverTime: new Date().toISOString() }));
   router.get('/pumpkins', (req, res) => res.json({ pumpkins: db.listPumpkins().map(publicPumpkin) }));
   router.get('/pumpkins/:id', (req, res) => { const pumpkin = db.getPumpkin(req.params.id); return pumpkin ? res.json({ pumpkin: publicPumpkin(pumpkin) }) : res.status(404).json({ error: 'pumpkin_not_found' }); });
-  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand }, customizationCatalog: customizationCatalog() }); });
+  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds }, customizationCatalog: customizationCatalog() }); });
 
   for (const provider of ['twitch', 'donationalerts', 'donatex', 'memealerts']) {
     router.get(`/auth/${provider}`, requireAdminSession, (req, res) => {
@@ -122,6 +122,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
   router.patch('/settings', requireAdminSession, (req, res) => {
     try {
       const body = req.body || {}; const current = db.getSettings(config); const patch = {};
+      if (body.growthThresholds !== undefined) patch.growthThresholds = validateGrowthThresholds(body.growthThresholds);
       if (body.noGoZone !== undefined) patch.noGoZone = normalizeZone(body.noGoZone, config.scene);
       if (body.groundY !== undefined) { const groundY = finiteNumber(body.groundY, { min: 0, max: config.scene.height }); if (groundY === null) throw new Error('invalid_ground_y'); patch.groundY = groundY; }
       if (body.rewardMapping !== undefined) { const rewardMapping = rewardMappingPatch(body.rewardMapping, current.rewardMapping); if (!rewardMapping) throw new Error('invalid_reward_mapping'); patch.rewardMapping = rewardMapping; }
@@ -140,7 +141,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
         return value;
       });
       for (const pumpkin of relocated) broadcast('pumpkin:updated', { pumpkin });
-      broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand } });
+      broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds } });
       broadcast('settings:nogo-updated', { noGoZone: settings.noGoZone }); return res.json({ settings });
     } catch (error) { return safeError(res, error); }
   });

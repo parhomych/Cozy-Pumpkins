@@ -101,6 +101,25 @@ test('donation processing creates, evolves, and deduplicates a pumpkin', () => {
   db.close();
 });
 
+test('donation processing applies persisted cumulative growth thresholds', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const service = new DonationService({ db, config, idFactory: () => 'threshold-pumpkin' });
+  db.updateSettings({ growthThresholds: { stage2: 100, stage3: 250, stage4: 500 } }, config);
+  const donate = (id, amount, message = '') => service.handle({
+    id, name: 'Threshold Viewer', amount, currency: 'RUB', message,
+  });
+
+  assert.equal(donate('threshold-1', 50, '!тыковка').pumpkin.stage, 1);
+  assert.equal(donate('threshold-2', 49).pumpkin.stage, 1);
+  assert.equal(donate('threshold-3', 1).pumpkin.stage, 2);
+  assert.equal(donate('threshold-4', 149).pumpkin.stage, 2);
+  assert.equal(donate('threshold-5', 1).pumpkin.stage, 3);
+  assert.equal(donate('threshold-6', 249).pumpkin.stage, 3);
+  assert.equal(donate('threshold-7', 1).pumpkin.stage, 4);
+  db.close();
+});
+
 test('donation event IDs and donor ownership are scoped to their provider', () => {
   const config = testConfig();
   const db = testDatabase(config);
@@ -260,7 +279,7 @@ test('reward mapping sanitizer accepts supported actions and merges partial upda
   assert.deepEqual(rewardMappingPatch({ jump_on: '' }, { inflate: 'reward-1' }), { inflate: 'reward-1', jump_on: '' });
 });
 
-test('animation settings persist globally and are broadcast through Socket.IO settings updates', () => {
+test('animation and growth settings persist and are broadcast through Socket.IO updates', () => {
   const config = testConfig();
   const db = testDatabase(config);
   assert.deepEqual(db.getSettings(config).animation, DEFAULT_ANIMATION);
@@ -282,6 +301,14 @@ test('animation settings persist globally and are broadcast through Socket.IO se
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
   assert.equal(ioEvents.at(-1)[1].settings.rewardMapping.inflate, 'reward-inflate');
   assert.equal(db.getSettings(config).rewardMapping.inflate, 'reward-inflate');
+  const growthThresholds = { stage2: 400, stage3: 1300, stage4: 3500 };
+  socketEvents.get('admin:settings:update')({ growthThresholds });
+  assert.equal(ioEvents.at(-1)[0], 'settings:updated');
+  assert.deepEqual(ioEvents.at(-1)[1].settings.growthThresholds, growthThresholds);
+  assert.deepEqual(db.getSettings(config).growthThresholds, growthThresholds);
+  socketEvents.get('admin:settings:update')({ growthThresholds: { stage2: 500, stage3: 500, stage4: 3000 } });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_growth_thresholds' }]);
+  assert.deepEqual(db.getSettings(config).growthThresholds, growthThresholds);
   socketEvents.get('admin:settings:update')({ rewardMapping: { ghost: 7 } });
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_reward_mapping' }]);
   db.close();
@@ -299,6 +326,18 @@ test('spatial bounds follow the square reference artwork stage scale at scene ed
   assert.equal(isPositionValid(pumpkin, edgeX - 0.01, config.scene.groundY, context), false);
   assert.equal(isPositionValid(pumpkin, config.scene.width - edgeX, config.scene.groundY, context), true);
   assert.equal(isPositionValid(pumpkin, config.scene.width - edgeX + 0.01, config.scene.groundY, context), false);
+});
+
+test('all growth stages can rest on the lower scene boundary', () => {
+  const config = testConfig();
+  const context = { scene: config.scene, noGoZone: { enabled: false } };
+
+  for (const stage of [1, 2, 3, 4]) {
+    const pumpkin = { stage };
+    const position = clampPosition(pumpkin, 900, config.scene.height, context);
+    assert.equal(position.y, config.scene.height);
+    assert.equal(isPositionValid(pumpkin, position.x, position.y, context), true);
+  }
 });
 
 test('No-Go Zone validation rejects overlap and clamp chooses a safe position', () => {

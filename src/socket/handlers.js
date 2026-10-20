@@ -5,9 +5,9 @@ import { sanitizeCustomization } from '../engine/customization-parser.js';
 import { finiteNumber, normalizeName, normalizeText } from '../utils/normalize.js';
 import { animationPatch } from '../engine/animation.js';
 import { rewardMappingPatch } from '../engine/rewards.js';
-import { validateSpawnSettings } from '../engine/donation-settings.js';
+import { validateGrowthThresholds, validateSpawnSettings } from '../engine/donation-settings.js';
 
-function publicSettings(settings) { return { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand }; }
+function publicSettings(settings) { return { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds }; }
 function safeScene(db, config, statuses) { const settings = db.getSettings(config); return { pumpkins: db.listPumpkins().map(publicPumpkin), settings: publicSettings(settings), authStatus: statuses.all() }; }
 function adminOnly(socket, handler) { return (...args) => { if (!socket.data.admin) { socket.emit('operation:error', { operation: args[0]?.operation || 'admin', message: 'admin_session_required' }); return; } return handler(...args); }; }
 export function attachSocketHandlers(io, { config, db, statuses, logger = console, onBroadcast = () => {} } = {}) {
@@ -25,6 +25,7 @@ export function attachSocketHandlers(io, { config, db, statuses, logger = consol
          const current = db.getSettings(config); const patch = {};
          if (payload.noGoZone !== undefined) patch.noGoZone = normalizeZone(payload.noGoZone, config.scene);
          if (payload.rewardMapping !== undefined) { const rewardMapping = rewardMappingPatch(payload.rewardMapping, current.rewardMapping); if (!rewardMapping) throw new Error('invalid_reward_mapping'); patch.rewardMapping = rewardMapping; }
+         if (payload.growthThresholds !== undefined) patch.growthThresholds = validateGrowthThresholds(payload.growthThresholds);
          Object.assign(patch, validateSpawnSettings(payload));
          const animationInput = payload.animation !== undefined ? payload.animation : (payload.eyeFrequency !== undefined || payload.mouthFrequency !== undefined ? { eyeFrequency: payload.eyeFrequency, mouthFrequency: payload.mouthFrequency } : undefined);
          if (animationInput !== undefined) { const animation = animationPatch(animationInput, current.animation); if (!animation) throw new Error('invalid_animation'); patch.animation = animation; }
@@ -40,7 +41,7 @@ export function attachSocketHandlers(io, { config, db, statuses, logger = consol
          for (const pumpkin of relocated) io.emit('pumpkin:updated', { pumpkin });
          io.emit('settings:updated', { settings: publicSettings(settings) });
          if (patch.noGoZone) io.emit('settings:nogo-updated', { noGoZone: settings.noGoZone });
-        } catch (error) { socket.emit('operation:error', { operation: payload.rewardMapping !== undefined || payload.animation !== undefined || payload.eyeFrequency !== undefined || payload.mouthFrequency !== undefined || payload.minSpawnDonation !== undefined || payload.spawnCommand !== undefined ? 'settings-update' : 'nogo-update', message: error.message }); }
+        } catch (error) { socket.emit('operation:error', { operation: payload.rewardMapping !== undefined || payload.growthThresholds !== undefined || payload.animation !== undefined || payload.eyeFrequency !== undefined || payload.mouthFrequency !== undefined || payload.minSpawnDonation !== undefined || payload.spawnCommand !== undefined ? 'settings-update' : 'nogo-update', message: error.message }); }
      });
      socket.on('admin:settings:update', updateSettings);
      socket.on('admin:settings:nogo-update', updateSettings);
