@@ -13,7 +13,10 @@
     "check": "node --check server.js && node --check src/config.js && node --check src/db/database.js && node --check src/http/api.js && node --check src/socket/handlers.js"
   },
   "dependencies": {
+    "@microsoft/signalr": "^10.0.11",
     "better-sqlite3": "^11.10.0",
+    "centrifuge": "^5.7.4",
+    "centrifuge-legacy": "npm:centrifuge@2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "gsap": "^3.13.0",

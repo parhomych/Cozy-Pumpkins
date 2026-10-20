@@ -57,6 +57,16 @@ export function loadConfig({ env = process.env, loadDotenv = true } = {}) {
       clientSecret: env.DA_CLIENT_SECRET || '',
       redirectUri: env.DA_REDIRECT_URI || 'http://localhost:3000/api/auth/donationalerts/callback',
     },
+    donatex: {
+      clientId: env.DONATEX_CLIENT_ID || '',
+      clientSecret: env.DONATEX_CLIENT_SECRET || '',
+      redirectUri: env.DONATEX_REDIRECT_URI || 'http://localhost:3000/api/auth/donatex/callback',
+    },
+    memealerts: {
+      clientId: env.MEMEALERTS_CLIENT_ID || '',
+      clientSecret: env.MEMEALERTS_CLIENT_SECRET || '',
+      redirectUri: env.MEMEALERTS_REDIRECT_URI || 'http://localhost:3000/api/auth/memealerts/callback',
+    },
   };
 }
 

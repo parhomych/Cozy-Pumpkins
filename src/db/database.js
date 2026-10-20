@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import BetterSqlite3 from 'better-sqlite3';
 import { DEFAULT_ANIMATION, sanitizeAnimation } from '../engine/animation.js';
+import { validateSpawnSettings } from '../engine/donation-settings.js';
 
 const schemaPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql');
 const DEFAULT_ZONE = { enabled: false, x: 0, y: 0, width: 0, height: 0 };
@@ -31,19 +32,51 @@ export class Database {
     this.migrateSchema();
   }
   migrateSchema() {
-    const settingsColumns = new Set(this.sqlite.prepare('PRAGMA table_info(settings)').all().map((column) => column.name));
-    const addedSettingsAnimation = !settingsColumns.has('animation_json');
-    if (addedSettingsAnimation) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN animation_json TEXT NOT NULL DEFAULT '{"eyeFrequency":1,"mouthFrequency":1}'`);
+    this.sqlite.transaction(() => {
+      let settingsColumns = new Set(this.sqlite.prepare('PRAGMA table_info(settings)').all().map((column) => column.name));
+      const addedSettingsAnimation = !settingsColumns.has('animation_json');
+      if (addedSettingsAnimation) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN animation_json TEXT NOT NULL DEFAULT '{"eyeFrequency":1,"mouthFrequency":1}'`);
+      if (!settingsColumns.has('min_spawn_donation')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN min_spawn_donation REAL NOT NULL DEFAULT 0 CHECK(min_spawn_donation >= 0)');
+      if (!settingsColumns.has('spawn_command')) this.sqlite.exec("ALTER TABLE settings ADD COLUMN spawn_command TEXT NOT NULL DEFAULT '!тыковка'");
 
-    // Older uncommitted builds stored animation on each pumpkin. Preserve the
-    // first valid value as the initial scene setting, then remove that column.
-    const pumpkinColumns = new Set(this.sqlite.prepare('PRAGMA table_info(pumpkins)').all().map((column) => column.name));
-    if (pumpkinColumns.has('animation_json')) {
-      const legacy = this.sqlite.prepare('SELECT animation_json FROM pumpkins WHERE animation_json IS NOT NULL ORDER BY created_at, id LIMIT 1').get();
-      if (legacy?.animation_json) this.legacyAnimation = sanitizeAnimation(parsed(legacy.animation_json, DEFAULT_ANIMATION));
-      if (addedSettingsAnimation) this.sqlite.prepare('UPDATE settings SET animation_json = ? WHERE id = 1').run(JSON.stringify(this.legacyAnimation));
-      this.sqlite.exec('ALTER TABLE pumpkins DROP COLUMN animation_json');
-    }
+      // Older uncommitted builds stored animation on each pumpkin. Preserve the
+      // first valid value as the initial scene setting, then remove that column.
+      const pumpkinColumns = new Set(this.sqlite.prepare('PRAGMA table_info(pumpkins)').all().map((column) => column.name));
+      if (pumpkinColumns.has('animation_json')) {
+        const legacy = this.sqlite.prepare('SELECT animation_json FROM pumpkins WHERE animation_json IS NOT NULL ORDER BY created_at, id LIMIT 1').get();
+        if (legacy?.animation_json) this.legacyAnimation = sanitizeAnimation(parsed(legacy.animation_json, DEFAULT_ANIMATION));
+        if (addedSettingsAnimation) this.sqlite.prepare('UPDATE settings SET animation_json = ? WHERE id = 1').run(JSON.stringify(this.legacyAnimation));
+        this.sqlite.exec('ALTER TABLE pumpkins DROP COLUMN animation_json');
+      }
+
+      const tokenSchema = this.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'auth_tokens'").get()?.sql || '';
+      if (!tokenSchema.includes("'donatex'") || !tokenSchema.includes("'memealerts'")) {
+        this.sqlite.exec(`ALTER TABLE auth_tokens RENAME TO auth_tokens_legacy;
+          CREATE TABLE auth_tokens (
+            provider TEXT PRIMARY KEY CHECK(provider IN ('twitch', 'donationalerts', 'donatex', 'memealerts')),
+            access_token_enc TEXT NOT NULL, refresh_token_enc TEXT, expires_at INTEGER,
+            scopes TEXT NOT NULL DEFAULT '', provider_user_id TEXT, provider_login TEXT, updated_at TEXT NOT NULL
+          );
+          INSERT INTO auth_tokens (provider, access_token_enc, refresh_token_enc, expires_at, scopes, provider_user_id, provider_login, updated_at)
+          SELECT provider, access_token_enc, refresh_token_enc, expires_at, scopes, provider_user_id, provider_login, updated_at FROM auth_tokens_legacy;
+          DROP TABLE auth_tokens_legacy;`);
+      }
+
+      const donationColumns = new Set(this.sqlite.prepare('PRAGMA table_info(donations)').all().map((column) => column.name));
+      const donationSchema = this.sqlite.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'donations'").get()?.sql || '';
+      if (!donationColumns.has('provider') || !donationSchema.includes('PRIMARY KEY (provider, event_id)')) {
+        this.sqlite.exec(`ALTER TABLE donations RENAME TO donations_legacy;
+          CREATE TABLE donations (
+            provider TEXT NOT NULL DEFAULT 'donationalerts' CHECK(provider IN ('donationalerts', 'donatex', 'memealerts')),
+            event_id TEXT NOT NULL, owner_key TEXT NOT NULL, amount REAL NOT NULL, currency TEXT NOT NULL,
+            message TEXT NOT NULL DEFAULT '', received_at TEXT NOT NULL, processed_at TEXT NOT NULL,
+            PRIMARY KEY (provider, event_id)
+          );
+          INSERT OR IGNORE INTO donations (provider, event_id, owner_key, amount, currency, message, received_at, processed_at)
+          SELECT 'donationalerts', event_id, owner_key, amount, currency, message, received_at, processed_at FROM donations_legacy;
+          DROP TABLE donations_legacy;`);
+      }
+    })();
   }
   close() { this.sqlite.close(); }
   transaction(fn) { return this.sqlite.transaction(fn)(); }
@@ -51,16 +84,16 @@ export class Database {
   getSettings(defaults = { scene: { groundY: 980 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} } }) {
     const row = this.sqlite.prepare('SELECT * FROM settings WHERE id = 1').get();
     if (!row) {
-      const value = { groundY: defaults.scene.groundY, noGoZone: { ...DEFAULT_ZONE }, pumpkinCurrency: defaults.pumpkinCurrency, rewardMapping: { ...defaults.twitch.rewardIds }, animation: sanitizeAnimation(this.legacyAnimation, defaults.animation || DEFAULT_ANIMATION) };
-      this.sqlite.prepare(`INSERT INTO settings (id, ground_y, no_go_zone_json, pumpkin_currency, reward_mapping_json, animation_json, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?)`).run(value.groundY, JSON.stringify(value.noGoZone), value.pumpkinCurrency, JSON.stringify(value.rewardMapping), JSON.stringify(value.animation), new Date().toISOString());
+      const value = { groundY: defaults.scene.groundY, noGoZone: { ...DEFAULT_ZONE }, pumpkinCurrency: defaults.pumpkinCurrency, rewardMapping: { ...defaults.twitch.rewardIds }, minSpawnDonation: 0, spawnCommand: '!тыковка', animation: sanitizeAnimation(this.legacyAnimation, defaults.animation || DEFAULT_ANIMATION) };
+      this.sqlite.prepare(`INSERT INTO settings (id, ground_y, no_go_zone_json, pumpkin_currency, reward_mapping_json, min_spawn_donation, spawn_command, animation_json, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`).run(value.groundY, JSON.stringify(value.noGoZone), value.pumpkinCurrency, JSON.stringify(value.rewardMapping), value.minSpawnDonation, value.spawnCommand, JSON.stringify(value.animation), new Date().toISOString());
       return value;
     }
-    return { groundY: row.ground_y, noGoZone: parsed(row.no_go_zone_json, DEFAULT_ZONE), pumpkinCurrency: row.pumpkin_currency, rewardMapping: parsed(row.reward_mapping_json, {}), animation: sanitizeAnimation(parsed(row.animation_json, DEFAULT_ANIMATION), defaults.animation || DEFAULT_ANIMATION), updatedAt: row.updated_at };
+    return { groundY: row.ground_y, noGoZone: parsed(row.no_go_zone_json, DEFAULT_ZONE), pumpkinCurrency: row.pumpkin_currency, rewardMapping: parsed(row.reward_mapping_json, {}), minSpawnDonation: row.min_spawn_donation, spawnCommand: row.spawn_command, animation: sanitizeAnimation(parsed(row.animation_json, DEFAULT_ANIMATION), defaults.animation || DEFAULT_ANIMATION), updatedAt: row.updated_at };
   }
   updateSettings(patch, defaults = { scene: { groundY: 980 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} } }) {
-    const current = this.getSettings(defaults); const next = { ...current, ...patch };
+    const current = this.getSettings(defaults); const next = { ...current, ...patch, ...validateSpawnSettings(patch) };
     next.animation = sanitizeAnimation(next.animation, defaults.animation || DEFAULT_ANIMATION);
-    this.sqlite.prepare('UPDATE settings SET ground_y = ?, no_go_zone_json = ?, pumpkin_currency = ?, reward_mapping_json = ?, animation_json = ?, updated_at = ? WHERE id = 1').run(next.groundY, JSON.stringify(next.noGoZone), next.pumpkinCurrency, JSON.stringify(next.rewardMapping), JSON.stringify(next.animation), new Date().toISOString());
+    this.sqlite.prepare('UPDATE settings SET ground_y = ?, no_go_zone_json = ?, pumpkin_currency = ?, reward_mapping_json = ?, min_spawn_donation = ?, spawn_command = ?, animation_json = ?, updated_at = ? WHERE id = 1').run(next.groundY, JSON.stringify(next.noGoZone), next.pumpkinCurrency, JSON.stringify(next.rewardMapping), next.minSpawnDonation, next.spawnCommand, JSON.stringify(next.animation), new Date().toISOString());
     return this.getSettings(defaults);
   }
 
@@ -87,7 +120,11 @@ export class Database {
   }
   deletePumpkin(id) { return this.sqlite.prepare('DELETE FROM pumpkins WHERE id = ?').run(id).changes > 0; }
   clearPumpkins() { return this.sqlite.prepare('DELETE FROM pumpkins').run().changes; }
-  insertDonation(event) { return this.sqlite.prepare(`INSERT OR IGNORE INTO donations (event_id, owner_key, amount, currency, message, received_at, processed_at) VALUES (@eventId, @ownerKey, @amount, @currency, @message, @receivedAt, @processedAt)`).run(event).changes === 1; }
+  insertDonation(event) {
+    const provider = event.provider || 'donationalerts';
+    if (!['donationalerts', 'donatex', 'memealerts'].includes(provider)) throw new Error('unsupported_donation_provider');
+    return this.sqlite.prepare(`INSERT OR IGNORE INTO donations (provider, event_id, owner_key, amount, currency, message, received_at, processed_at) VALUES (@provider, @eventId, @ownerKey, @amount, @currency, @message, @receivedAt, @processedAt)`).run({ ...event, provider }).changes === 1;
+  }
   insertRedemption(event) { return this.sqlite.prepare(`INSERT OR IGNORE INTO redemptions (redemption_id, reward_id, user_id, user_login, input, status, received_at, processed_at) VALUES (@redemptionId, @rewardId, @userId, @userLogin, @input, @status, @receivedAt, @processedAt)`).run(event).changes === 1; }
   saveToken(provider, token) { this.sqlite.prepare(`INSERT INTO auth_tokens (provider, access_token_enc, refresh_token_enc, expires_at, scopes, provider_user_id, provider_login, updated_at) VALUES (@provider, @accessTokenEnc, @refreshTokenEnc, @expiresAt, @scopes, @providerUserId, @providerLogin, @updatedAt) ON CONFLICT(provider) DO UPDATE SET access_token_enc=@accessTokenEnc, refresh_token_enc=@refreshTokenEnc, expires_at=@expiresAt, scopes=@scopes, provider_user_id=@providerUserId, provider_login=@providerLogin, updated_at=@updatedAt`).run({ provider, ...token, refreshTokenEnc: token.refreshTokenEnc || null, expiresAt: token.expiresAt || null, scopes: token.scopes || '', providerUserId: token.providerUserId || null, providerLogin: token.providerLogin || null, updatedAt: new Date().toISOString() }); }
   getToken(provider) { return this.sqlite.prepare('SELECT * FROM auth_tokens WHERE provider = ?').get(provider) || null; }

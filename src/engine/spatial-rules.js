@@ -67,7 +67,7 @@ export function findSpawnPosition(pumpkin, pumpkins, context) {
   for (let x = size.width / 2; x <= context.scene.width - size.width / 2; x += step) {
     if (isPositionValid(pumpkin, x, y, context) && !pumpkins.some((other) => rectanglesOverlap(artworkBounds(pumpkin, x, y), artworkBounds(other)))) return { x, y };
   }
-  return clampPosition(pumpkin, context.scene.width / 2, y, context);
+  return null;
 }
 export function validateParentLink(id, parentId, pumpkins, maxHeight = 3) {
   if (parentId == null) return { valid: true, height: 1 };

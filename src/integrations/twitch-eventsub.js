@@ -110,7 +110,7 @@ export class TwitchEventSub {
         this.scheduleReconnect('Twitch did not provide a live session.');
         return;
       }
-      this.keepaliveTimeoutMs = Math.max(1_000, Number(session.keepalive_timeout_seconds || 10) * 1000);
+      this.keepaliveTimeoutMs = Math.max(1_000, Number(session.keepalive_timeout_seconds || 10) * 1000) + 1_000;
       this.resetKeepalive(socket);
       if (subscribe) {
         try {
@@ -137,12 +137,12 @@ export class TwitchEventSub {
         }
       }
       if (this.socket === socket && this.generation === generation) {
-        this.reconnectAttempts = 0;
         this.setStatus('Listening');
       }
       return;
     }
     if (type === 'session_keepalive') {
+      this.reconnectAttempts = 0;
       this.resetKeepalive(socket);
       return;
     }
@@ -165,11 +165,12 @@ export class TwitchEventSub {
       return;
     }
     if (type === 'notification') {
-      this.resetKeepalive(socket);
       if (envelope?.metadata?.subscription_type !== REDEMPTION_TYPE || !envelope?.payload?.event?.id || !envelope?.payload?.event?.reward?.id) {
         this.logger.warn('Ignored an invalid or unrelated Twitch EventSub notification.');
         return;
       }
+      this.reconnectAttempts = 0;
+      this.resetKeepalive(socket);
       try {
         await this.onRedemption?.(envelope.payload.event);
       } catch (error) {
@@ -183,24 +184,22 @@ export class TwitchEventSub {
     this.keepaliveTimer = this.setTimeout(() => {
       if (this.running && this.socket === socket) {
         this.logger.warn('Twitch EventSub keepalive timed out.');
-        socket.close(4000, 'EventSub keepalive timeout');
+        this.scheduleReconnect('Twitch EventSub keepalive timed out.');
       }
     }, this.keepaliveTimeoutMs);
   }
 
   scheduleReconnect(message) {
     if (!this.running || this.reconnectTimer) return;
-    if (this.socket) {
-      const socket = this.socket;
-      this.socket = null;
-      socket.close(1011, 'EventSub reconnect');
-    }
+    const socket = this.socket;
+    this.socket = null;
     if (this.keepaliveTimer) this.clearTimeout(this.keepaliveTimer);
     this.keepaliveTimer = null;
     this.reconnectAttempts += 1;
     if (this.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
       this.running = false;
       this.setStatus('Error', `${message} Retry limit reached; reconnect Twitch to try again.`);
+      this.closeForReconnect(socket);
       return;
     }
     const delay = Math.min(1000 * (2 ** (this.reconnectAttempts - 1)), MAX_RECONNECT_DELAY_MS);
@@ -209,6 +208,16 @@ export class TwitchEventSub {
       this.reconnectTimer = null;
       if (this.running) this.connect(EVENTSUB_URL, true);
     }, delay);
+    this.closeForReconnect(socket);
+  }
+
+  closeForReconnect(socket) {
+    if (!socket || (socket.readyState !== 0 && socket.readyState !== 1)) return;
+    try {
+      socket.close(4001, 'EventSub reconnect');
+    } catch {
+      this.logger.warn('Unable to close Twitch EventSub socket during reconnect.');
+    }
   }
 
   clearTimers() {

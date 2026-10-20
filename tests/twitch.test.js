@@ -12,7 +12,9 @@ class MockWebSocket {
   constructor(url) {
     this.url = url;
     this.listeners = new Map();
+    this.readyState = 1;
     this.closed = false;
+    this.closeCalls = [];
     MockWebSocket.instances.push(this);
   }
 
@@ -28,9 +30,16 @@ class MockWebSocket {
     this.emit('message', { data: typeof payload === 'string' ? payload : JSON.stringify(payload) });
   }
 
-  close() {
+  close(code = 1000, reason = '') {
+    if (code !== 1000 && (code < 3000 || code > 4999)) {
+      throw new DOMException('invalid code', 'InvalidAccessError');
+    }
+    if (this.readyState === 2 || this.readyState === 3) return;
+    this.closeCalls.push({ code, reason });
+    this.readyState = 2;
     this.closed = true;
     this.emit('close');
+    this.readyState = 3;
   }
 }
 
@@ -108,6 +117,102 @@ test('EventSub subscribes on welcome, delivers only valid redemptions, and resum
   await client.stop();
   assert.equal(second.closed, true);
   assert.equal(statuses.at(-1).connectionStatus, 'Disconnected');
+});
+
+test('EventSub keepalive timeout schedules reconnect and closes the socket once with a valid code', async () => {
+  MockWebSocket.instances = [];
+  const statuses = [];
+  const timers = [];
+  const client = new TwitchEventSub({
+    tokenStore: { get: () => ({ accessToken: 'private-token', providerUserId: 'broadcaster-1' }) },
+    twitchApi: { async createRedemptionSubscription() { return {}; } },
+    statuses: { set: (_provider, value) => statuses.push(value) },
+    WebSocketImpl: MockWebSocket,
+    setTimeoutImpl: (callback, delay) => {
+      const timer = { callback, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: (timer) => { if (timer) timer.cleared = true; },
+    logger: { warn() {} },
+  });
+
+  await client.start();
+  const socket = MockWebSocket.instances[0];
+  socket.message({
+    metadata: { message_type: 'session_welcome' },
+    payload: { session: { id: 'session-timeout', keepalive_timeout_seconds: 1 } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const keepalive = timers.find((timer) => timer.delay === 2000 && !timer.cleared);
+  assert.ok(keepalive);
+
+  assert.doesNotThrow(() => keepalive.callback());
+  assert.deepEqual(socket.closeCalls.map(({ code }) => code), [4001]);
+  assert.equal(statuses.at(-1).connectionStatus, 'Retrying');
+  assert.ok(timers.find((timer) => timer.delay === 1000 && !timer.cleared));
+  await client.stop();
+});
+
+test('EventSub does not reset retry backoff until a keepalive proves the connection healthy', async () => {
+  MockWebSocket.instances = [];
+  const timers = [];
+  const client = new TwitchEventSub({
+    tokenStore: { get: () => ({ accessToken: 'private-token', providerUserId: 'broadcaster-1' }) },
+    twitchApi: { async createRedemptionSubscription() { return {}; } },
+    statuses: { set: () => {} },
+    WebSocketImpl: MockWebSocket,
+    setTimeoutImpl: (callback, delay) => {
+      const timer = { callback, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: (timer) => { if (timer) timer.cleared = true; },
+    logger: { warn() {} },
+  });
+
+  await client.start();
+  client.scheduleReconnect('Simulated initial interruption.');
+  const firstRetry = timers.find((timer) => timer.delay === 1000 && !timer.cleared);
+  firstRetry.callback();
+  const reconnected = MockWebSocket.instances.at(-1);
+  reconnected.message({
+    metadata: { message_type: 'session_welcome' },
+    payload: { session: { id: 'unstable-session', keepalive_timeout_seconds: 10 } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(client.reconnectAttempts, 1);
+  client.scheduleReconnect('Simulated repeated timeout.');
+  assert.ok(timers.find((timer) => timer.delay === 2000 && !timer.cleared));
+
+  await client.stop();
+});
+
+test('EventSub reconnect still schedules when closing the old socket throws', async () => {
+  MockWebSocket.instances = [];
+  const timers = [];
+  const client = new TwitchEventSub({
+    tokenStore: { get: () => ({ accessToken: 'private-token', providerUserId: 'broadcaster-1' }) },
+    twitchApi: { async createRedemptionSubscription() { return {}; } },
+    statuses: { set: () => {} },
+    WebSocketImpl: MockWebSocket,
+    setTimeoutImpl: (callback, delay) => {
+      const timer = { callback, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: (timer) => { if (timer) timer.cleared = true; },
+    logger: { warn() {} },
+  });
+
+  await client.start();
+  const socket = MockWebSocket.instances[0];
+  socket.close = () => { throw new DOMException('invalid code', 'InvalidAccessError'); };
+
+  assert.doesNotThrow(() => client.scheduleReconnect('Testing reconnect close failure.'));
+  assert.ok(timers.find((timer) => timer.delay === 1000 && !timer.cleared));
+  await client.stop();
 });
 
 test('Twitch Helix client pages rewards and returns safe errors', async () => {
@@ -208,7 +313,10 @@ test('server wiring applies an EventSub redemption to the mapped viewer pumpkin 
       name: 'Viewer One',
       amount: 100,
       currency: 'RUB',
+      message: '!тыковка',
     });
+    const donationPumpkin = runtime.db.listPumpkins()[0];
+    runtime.db.updatePumpkin(donationPumpkin.id, { twitchUserId: 'viewer-1', twitchUsername: 'viewer-one' });
     await runtime.twitchEventSub.start();
     const socket = MockWebSocket.instances[0];
     socket.message({

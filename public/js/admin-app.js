@@ -19,7 +19,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const canvas = $('#scene-canvas'); const previewFrame = $('#preview-frame'); const zoneElement = $('#nogo-zone');
 const renderer = new PumpkinRenderer(canvas, { interactive: true, onSelect: (id, pumpkin, event) => { selectPumpkin(id); if (event) beginDrag(id, event); } });
-const state = { pumpkins: new Map(), settings: { groundY: 980, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 }, animation: { ...DEFAULT_ANIMATION }, rewardMapping: { ...DEFAULT_REWARD_MAPPING } }, twitchRewards: [], selectedId: null, socket: null, drag: null, zoneDrag: null, settingsSaveTimer: null, previewCharacter: null };
+const state = { pumpkins: new Map(), settings: { groundY: 980, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 }, animation: { ...DEFAULT_ANIMATION }, rewardMapping: { ...DEFAULT_REWARD_MAPPING }, pumpkinCurrency: 'RUB', minSpawnDonation: 0, spawnCommand: '!тыковка' }, customizationCatalog: [], catalogCharacters: [], twitchRewards: [], selectedId: null, socket: null, drag: null, zoneDrag: null, settingsSaveTimer: null, previewCharacter: null };
 
 function toast(message) { const el = $('#toast'); if (!el) return; el.textContent = message; el.classList.add('visible'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('visible'), 2600); }
 function setSocketState(label, kind = '') { $('#socket-status').textContent = label; const dot = $('#socket-dot'); dot.className = `status-dot ${kind}`; }
@@ -30,6 +30,93 @@ function animationFrequency(value, fallback) {
   if (value === '' || value === null || value === undefined) return fallback;
   const number = Number(value);
   return Number.isFinite(number) ? clamp(number, ANIMATION_MIN, ANIMATION_MAX) : fallback;
+}
+function renderSpawnSettings() { $('#min-spawn-donation').value = state.settings.minSpawnDonation ?? 0; $('#spawn-command').value = state.settings.spawnCommand || '!тыковка'; $('#spawn-currency').textContent = state.settings.pumpkinCurrency || 'RUB'; }
+function renderCustomizationCatalog(catalog = []) {
+  const container = $('#customization-catalog');
+  state.catalogCharacters.forEach((character) => character.destroy());
+  state.catalogCharacters = [];
+  container.replaceChildren();
+  if (!Array.isArray(catalog)) return;
+  const labels = { skin: 'Skin', eyes: 'Eyes', mouth: 'Mouth', hat: 'Hat', prop: 'Prop' };
+  const defaults = { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' };
+  for (const group of catalog) {
+    if (!labels[group?.slot] || !Array.isArray(group.values)) continue;
+    const section = document.createElement('section');
+    section.className = 'catalog-group';
+    const heading = document.createElement('h4');
+    heading.textContent = labels[group.slot];
+    section.append(heading);
+    const grid = document.createElement('div');
+    grid.className = 'catalog-grid';
+    for (const item of group.values) {
+      if (typeof item?.value !== 'string' || !Array.isArray(item.keywords)) continue;
+      const option = document.createElement('article');
+      option.className = 'catalog-option';
+      const preview = document.createElement('div');
+      preview.className = 'catalog-preview';
+      const character = new PumpkinCharacter({
+        id: `catalog-${group.slot}-${item.value}`,
+        stage: 2,
+        x: 110,
+        y: 220,
+        customization: { ...defaults, [group.slot]: item.value },
+      }, { interactive: false, positioning: 'local', animationSettings: state.settings.animation });
+      character.setPositionImmediate(110, 220, false);
+      character.root.setAttribute('aria-label', `${labels[group.slot]}: ${item.value}`);
+      preview.append(character.root);
+      state.catalogCharacters.push(character);
+      const detail = document.createElement('div');
+      const value = document.createElement('strong');
+      value.textContent = item.value;
+      const keywords = document.createElement('p');
+      keywords.className = 'catalog-keywords';
+      keywords.textContent = item.keywords.join(' · ');
+      detail.append(value, keywords);
+      option.append(preview, detail);
+      grid.append(option);
+    }
+    section.append(grid);
+    container.append(section);
+  }
+}
+async function loadSpawnSettings() {
+  const status = $('#spawn-settings-state');
+  try {
+    const response = await fetch('/api/settings');
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || 'settings_load_failed');
+    state.settings = { ...state.settings, ...(body.settings || {}) };
+    state.customizationCatalog = body.customizationCatalog || [];
+    renderSpawnSettings();
+    renderCustomizationCatalog(state.customizationCatalog);
+    status.textContent = 'Spawn settings loaded.';
+  } catch (error) {
+    status.textContent = `Unable to load spawn settings: ${error.message}`;
+  }
+}
+async function saveSpawnSettings() {
+  const status = $('#spawn-settings-state');
+  const rawThreshold = $('#min-spawn-donation').value;
+  const threshold = Number(rawThreshold);
+  if (rawThreshold.trim() === '' || !Number.isFinite(threshold) || threshold < 0) {
+    status.textContent = 'Minimum donation must be a finite number greater than or equal to zero.';
+    return;
+  }
+  try {
+    const response = await fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ minSpawnDonation: threshold, spawnCommand: $('#spawn-command').value }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || 'settings_update_failed');
+    state.settings = { ...state.settings, ...(body.settings || {}) };
+    renderSpawnSettings();
+    status.textContent = 'Spawn settings saved.';
+  } catch (error) {
+    status.textContent = `Unable to save spawn settings: ${error.message}`;
+  }
 }
 function zone() { return state.settings.noGoZone || { enabled: false, x: 0, y: 0, width: 0, height: 0 }; }
 function renderZone() {
@@ -170,12 +257,13 @@ function moveZone(event) { const drag = state.zoneDrag; if (!drag) return; const
   if (next.width < 40) { if (drag.mode.includes('w')) next.x = next.x + next.width - 40; next.width = 40; } if (next.height < 40) { if (drag.mode.includes('n')) next.y = next.y + next.height - 40; next.height = 40; } setZone(next);
 }
 function endZone() { if (!state.zoneDrag) return; try { previewFrame.releasePointerCapture(state.zoneDrag.pointerId); } catch {} state.zoneDrag = null; }
-function updateProviderCard(value) { if (!value?.provider) return; const card = document.querySelector(`[data-provider="${value.provider}"]`); if (!card) return; const wasConnected = card.dataset.authenticated === 'true'; const disconnected = value.provider === 'twitch' ? 'Disconnected' : 'Not connected'; $('[data-auth-status]', card).textContent = value.authStatus || disconnected; $('[data-connection-status]', card).textContent = value.connectionStatus || disconnected; $('[data-account]', card).textContent = value.account || value.providerLogin || '—'; $('[data-provider-message]', card).textContent = value.message || ''; const button = $('.provider-action', card); const connected = value.authStatus === 'Connected'; card.dataset.authenticated = connected ? 'true' : 'false'; button.textContent = connected ? `Disconnect ${value.provider === 'donationalerts' ? 'DonationAlerts' : 'Twitch'}` : `Connect ${value.provider === 'donationalerts' ? 'DonationAlerts' : 'Twitch'}`; button.dataset.connected = connected ? 'true' : 'false'; if (value.provider === 'twitch' && connected && !wasConnected) void loadTwitchRewards(); }
-function handleScene(scene = {}) { state.pumpkins.clear(); state.settings = { ...state.settings, ...(scene.settings || {}), animation: { ...DEFAULT_ANIMATION, ...(scene.settings?.animation || {}) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(scene.settings?.rewardMapping || {}) } }; renderer.setSettings(state.settings); for (const p of scene.pumpkins || []) state.pumpkins.set(p.id, p); renderer.sync([...state.pumpkins.values()]); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSearch(); renderInspector(); for (const status of scene.authStatus || []) updateProviderCard(status); }
+function updateProviderCard(value) { if (!value?.provider) return; const card = document.querySelector(`[data-provider="${value.provider}"]`); if (!card) return; const wasConnected = card.dataset.authenticated === 'true'; const providerNames = { twitch: 'Twitch', donationalerts: 'DonationAlerts', donatex: 'DonatEx', memealerts: 'Meme Alerts' }; const providerName = providerNames[value.provider] || value.provider; const disconnected = 'Disconnected'; $('[data-auth-status]', card).textContent = value.authStatus || disconnected; $('[data-connection-status]', card).textContent = value.connectionStatus || disconnected; $('[data-account]', card).textContent = value.account || '—'; $('[data-provider-message]', card).textContent = value.message || ''; const button = $('.provider-action', card); const connected = value.authStatus === 'Connected'; card.dataset.authenticated = connected ? 'true' : 'false'; button.textContent = `${connected ? 'Disconnect' : 'Connect'} ${providerName}`; button.dataset.connected = connected ? 'true' : 'false'; if (value.provider === 'twitch' && connected && !wasConnected) void loadTwitchRewards(); }
+function handleScene(scene = {}) { state.pumpkins.clear(); state.settings = { ...state.settings, ...(scene.settings || {}), animation: { ...DEFAULT_ANIMATION, ...(scene.settings?.animation || {}) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(scene.settings?.rewardMapping || {}) } }; renderer.setSettings(state.settings); for (const p of scene.pumpkins || []) state.pumpkins.set(p.id, p); renderer.sync([...state.pumpkins.values()]); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderSearch(); renderInspector(); for (const status of scene.authStatus || []) updateProviderCard(status); }
 async function providerAction(provider, connected) { const path = `/api/auth/${provider}/${connected ? 'logout' : ''}`.replace(/\/$/, ''); if (!connected) { window.location.assign(`/api/auth/${provider}`); return; } try { const response = await fetch(path, { method: 'POST', headers: { 'Accept': 'application/json' } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'logout_failed'); toast(`${provider} disconnected locally`); } catch (error) { toast(error.message); } }
 function connectSocket() { if (typeof globalThis.io !== 'function') { setSocketState('Socket.IO unavailable', 'error'); return; } const socket = globalThis.io(); state.socket = socket; socket.on('connect', () => setSocketState('Live', 'live')); socket.on('disconnect', () => { setSocketState('Reconnecting…', 'warn'); if (state.drag) endDrag(); }); socket.on('connect_error', () => setSocketState('Reconnecting…', 'warn')); socket.io?.on('reconnect_attempt', () => setSocketState('Reconnecting…', 'warn'));
-    socket.on('scene:init', handleScene); socket.on('integration:status', updateProviderCard); socket.on('pumpkin:spawned', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:updated', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:move', (payload) => { if (!state.drag || state.drag.id !== payload.id) renderer.applyMove(payload); }); socket.on('pumpkin:move-ended', (payload) => { renderer.finishMove(payload); const p = state.pumpkins.get(payload.id); if (p) state.pumpkins.set(payload.id, { ...p, x: payload.x, y: payload.y }); }); socket.on('pumpkin:evolved', ({ id, stage, totalDonated }) => { const p = state.pumpkins.get(id); if (p) { p.stage = stage; p.totalDonated = totalDonated; upsertPumpkin(p); } }); socket.on('pumpkin:action', (payload) => renderer.action(payload.id, payload.action, payload)); socket.on('pumpkin:deleted', ({ id }) => { removePumpkin(id); renderSearch(); toast('Pumpkin deleted'); }); socket.on('pumpkin:cleared', () => { state.pumpkins.clear(); renderer.clear(); selectPumpkin(null); renderSearch(); toast('Scene cleared'); }); socket.on('settings:updated', ({ settings } = {}) => { state.settings = { ...state.settings, ...(settings || {}), animation: { ...DEFAULT_ANIMATION, ...(settings?.animation || state.settings.animation) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(settings?.rewardMapping || state.settings.rewardMapping) } }; renderer.setSettings(state.settings); renderZone(); renderAnimationSettings(); renderRewardMapping(); if (settings?.rewardMapping) $('#reward-mapping-state').textContent = 'Reward mapping saved.'; }); socket.on('settings:nogo-updated', ({ noGoZone }) => { setZone(noGoZone, { persist: false }); }); socket.on('operation:error', ({ message }) => { if (message === 'invalid_reward_mapping') { $('#reward-mapping-state').textContent = 'Invalid reward mapping.'; renderRewardMapping(); } else $('#reward-mapping-state').textContent = $('#reward-mapping-state').textContent; toast(message || 'Operation rejected by server'); }); }
+    socket.on('scene:init', handleScene); socket.on('integration:status', updateProviderCard); socket.on('pumpkin:spawned', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:updated', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:move', (payload) => { if (!state.drag || state.drag.id !== payload.id) renderer.applyMove(payload); }); socket.on('pumpkin:move-ended', (payload) => { renderer.finishMove(payload); const p = state.pumpkins.get(payload.id); if (p) state.pumpkins.set(payload.id, { ...p, x: payload.x, y: payload.y }); }); socket.on('pumpkin:evolved', ({ id, stage, totalDonated }) => { const p = state.pumpkins.get(id); if (p) { p.stage = stage; p.totalDonated = totalDonated; upsertPumpkin(p); } }); socket.on('pumpkin:action', (payload) => renderer.action(payload.id, payload.action, payload)); socket.on('pumpkin:deleted', ({ id }) => { removePumpkin(id); renderSearch(); toast('Pumpkin deleted'); }); socket.on('pumpkin:cleared', () => { state.pumpkins.clear(); renderer.clear(); selectPumpkin(null); renderSearch(); toast('Scene cleared'); }); socket.on('settings:updated', ({ settings } = {}) => { state.settings = { ...state.settings, ...(settings || {}), animation: { ...DEFAULT_ANIMATION, ...(settings?.animation || state.settings.animation) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(settings?.rewardMapping || state.settings.rewardMapping) } }; renderer.setSettings(state.settings); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); if (settings?.rewardMapping) $('#reward-mapping-state').textContent = 'Reward mapping saved.'; }); socket.on('settings:nogo-updated', ({ noGoZone }) => { setZone(noGoZone, { persist: false }); }); socket.on('operation:error', ({ message }) => { if (message === 'invalid_reward_mapping') { $('#reward-mapping-state').textContent = 'Invalid reward mapping.'; renderRewardMapping(); } else if (message === 'invalid_min_spawn_donation' || message === 'invalid_spawn_command') $('#spawn-settings-state').textContent = message; else $('#reward-mapping-state').textContent = $('#reward-mapping-state').textContent; toast(message || 'Operation rejected by server'); }); }
 function wireUI() {
+  $('#save-spawn-settings').addEventListener('click', saveSpawnSettings);
   $('#pumpkin-search').addEventListener('input', renderSearch); $('#pumpkin-search').addEventListener('focus', renderSearch); document.addEventListener('click', (event) => { if (!event.target.closest('.search-wrap')) $('#search-results').classList.remove('open'); });
   canvas.addEventListener('pointermove', moveDrag); canvas.addEventListener('pointerup', endDrag); canvas.addEventListener('pointercancel', endDrag); window.addEventListener('blur', endDrag);
   zoneElement.addEventListener('pointerdown', beginZone); $$('.resize-handle', zoneElement).forEach((handle) => handle.addEventListener('pointerdown', beginResize)); previewFrame.addEventListener('pointermove', moveZone); previewFrame.addEventListener('pointerup', endZone); previewFrame.addEventListener('pointercancel', endZone);
@@ -188,7 +276,7 @@ function wireUI() {
   $$('#inspector-form [data-animation]').forEach((button) => button.addEventListener('click', () => { const p = selected(); if (!p) return; state.socket?.emit('admin:animation:test', { id: p.id, action: button.dataset.animation }); if (!state.socket) renderer.action(p.id, button.dataset.animation, {}); }));
   $('#delete-pumpkin').addEventListener('click', () => { const p = selected(); if (!p || !window.confirm(`Delete ${displayName(p)}?`)) return; renderer.characters.get(p.id)?.disappear(); state.socket?.emit('admin:pumpkin:delete', { id: p.id }); });
   $('#clear-all').addEventListener('click', () => { if (!state.pumpkins.size || !window.confirm(`Delete all ${state.pumpkins.size} pumpkins? This cannot be undone.`)) return; state.socket?.emit('admin:pumpkins:clear', { confirmation: true }); });
-  $('#simulate-donation').addEventListener('click', async () => { try { const response = await fetch('/api/dev/donation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: `dev-${Date.now()}`, name: $('#sim-name').value, amount: Number($('#sim-amount').value), currency: state.settings.pumpkinCurrency || 'RUB', message: '' }) }); if (!response.ok) throw new Error('simulator_unavailable'); toast('Test donation sent'); } catch (error) { toast(error.message); } });
+  $('#simulate-donation').addEventListener('click', async () => { try { const response = await fetch('/api/dev/donation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: `dev-${Date.now()}`, name: $('#sim-name').value, amount: Number($('#sim-amount').value), currency: state.settings.pumpkinCurrency || 'RUB', message: state.settings.spawnCommand || '!тыковка' }) }); if (!response.ok) throw new Error('simulator_unavailable'); toast('Test donation sent'); } catch (error) { toast(error.message); } });
 }
 async function loadStatus() { try { const response = await fetch('/api/status'); const data = await response.json(); for (const item of data.integrations || []) updateProviderCard(item); const exposed = data.devSimulator || data.features?.donationSimulator; if (exposed) $('#simulator').hidden = false; } catch { /* Socket.IO remains the source of live state. */ } }
-wireUI(); connectSocket(); loadStatus(); renderZone(); renderAnimationSettings(); renderRewardMapping();
+wireUI(); connectSocket(); loadStatus(); loadSpawnSettings(); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings();

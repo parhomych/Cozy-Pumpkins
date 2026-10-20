@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DonationService } from '../src/engine/donations.js';
 import { RewardService } from '../src/engine/rewards.js';
-import { parseCustomization } from '../src/engine/customization-parser.js';
+import { customizationCatalog, customizationValues, parseCustomization } from '../src/engine/customization-parser.js';
 import { clampPosition, dimensionsFor, isPositionValid } from '../src/engine/spatial-rules.js';
 import { testConfig, testDatabase } from './helpers.js';
 import { Database } from '../src/db/database.js';
@@ -18,6 +18,25 @@ test('customization parser accepts the documented command and ignores unknown wo
   const parsed = parseCustomization('  !ТЫКОВКА ведьма рожки хитрые клыки метла неизвестно');
   assert.equal(parsed.commandDetected, true);
   assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'sly', mouth: 'fangs', hat: 'horns', prop: 'broom' });
+});
+
+test('customization parser recognizes the configured command prefix only', () => {
+  const parsed = parseCustomization('  !Pumpkin witch stars метла extra', undefined, '!pumpkin');
+  assert.equal(parsed.commandDetected, true);
+  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'stars', mouth: 'cat', hat: 'witch', prop: 'broom' });
+  assert.equal(parseCustomization('!pumpkinExtra witch', undefined, '!pumpkin').commandDetected, false);
+  assert.equal(parseCustomization('!тыковка witch', undefined, '!pumpkin').commandDetected, false);
+});
+
+test('customization catalog exposes canonical values and aliases for supported slots', () => {
+  const catalog = customizationCatalog();
+  assert.deepEqual(catalog.map(({ slot }) => slot), ['skin', 'eyes', 'mouth', 'hat', 'prop']);
+  for (const group of catalog) {
+    assert.deepEqual(group.values.map(({ value }) => value), customizationValues()[group.slot]);
+    assert.ok(group.values.every(({ value, keywords }) => keywords.includes(value)));
+  }
+  const props = catalog.find(({ slot }) => slot === 'prop');
+  assert.ok(props.values.some(({ value, keywords }) => value === 'lantern' && keywords.includes('фонарь')));
 });
 
 test('OAuth authorization URLs use the server API callback routes', () => {
@@ -79,6 +98,147 @@ test('donation processing creates, evolves, and deduplicates a pumpkin', () => {
   assert.equal(second.pumpkin.stage, 3);
   assert.equal(db.listPumpkins().length, 1);
   assert.deepEqual(events.map(([event]) => event), ['pumpkin:spawned', 'pumpkin:evolved', 'pumpkin:updated', 'pumpkin:evolved']);
+  db.close();
+});
+
+test('donation event IDs and donor ownership are scoped to their provider', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  let id = 0;
+  const service = new DonationService({ db, config, idFactory: () => `provider-pumpkin-${++id}` });
+  const first = service.handle({
+    provider: 'donatex', id: 'collision', ownerId: 'shared-id', name: 'Cross Platform',
+    amount: 20, currency: 'RUB', message: '!тыковка',
+  });
+  const second = service.handle({
+    provider: 'memealerts', id: 'collision', ownerId: 'shared-id', name: 'Cross Platform',
+    amount: 20, currency: 'RUB', message: '!тыковка',
+  });
+  assert.equal(first.duplicate, false);
+  assert.equal(second.duplicate, false);
+  assert.notEqual(first.pumpkin.id, second.pumpkin.id);
+  assert.deepEqual(db.listPumpkins().map(({ ownerKey }) => ownerKey).sort(), ['donatex:shared-id', 'memealerts:shared-id']);
+  const anonymousDonatEx = service.handle({
+    provider: 'donatex', id: 'anonymous-dx', name: 'Name Only Viewer', amount: 20, currency: 'RUB', message: '!тыковка',
+  });
+  const anonymousMemeAlerts = service.handle({
+    provider: 'memealerts', id: 'anonymous-ma', name: 'Name Only Viewer', amount: 20, currency: 'RUB', message: '!тыковка',
+  });
+  assert.notEqual(anonymousDonatEx.pumpkin.id, anonymousMemeAlerts.pumpkin.id);
+  assert.deepEqual(
+    db.listPumpkins().filter(({ ownerNormalized }) => ownerNormalized === 'name only viewer').map(({ ownerKey }) => ownerKey).sort(),
+    ['name:donatex:name only viewer', 'name:memealerts:name only viewer'],
+  );
+  assert.throws(
+    () => service.handle({ provider: 'unknown', id: 'invalid-provider', name: 'Viewer', amount: 5, currency: 'RUB' }),
+    { message: 'invalid_donation_event' },
+  );
+  db.close();
+});
+
+test('donation spawn gates and provider identities preserve legacy owners and deduplicate by provider', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  let id = 0;
+  const events = [];
+  const service = new DonationService({ db, config, idFactory: () => `pumpkin-${++id}`, emit: (event) => events.push(event) });
+
+  const legacy = service.handle({
+    id: 'legacy-create', provider: 'donationalerts', ownerId: 'legacy-user', name: 'Legacy Viewer',
+    amount: 10, currency: 'RUB', message: '!тыковка',
+  });
+  assert.equal(legacy.spawned, true);
+  const nameOnlyLegacy = service.handle({
+    id: 'legacy-name-create', provider: 'donationalerts', name: 'Legacy Name',
+    amount: 10, currency: 'RUB', message: '!тыковка',
+  });
+  assert.equal(nameOnlyLegacy.spawned, true);
+  db.updateSettings({ minSpawnDonation: 100, spawnCommand: '!spawn' }, config);
+
+  const donor = { provider: 'donatex', ownerId: 'shared-provider-id', name: 'Same Name', currency: 'RUB' };
+  assert.equal(service.handle({ ...donor, id: 'below', amount: 99, message: '!spawn' }).spawned, false);
+  assert.equal(db.listPumpkins().length, 2);
+  assert.equal(service.handle({ ...donor, id: 'missing-command', amount: 100, message: 'hello !spawn' }).spawned, false);
+  assert.equal(db.listPumpkins().length, 2);
+  const created = service.handle({ ...donor, id: 'shared-event-id', amount: 100, message: '  !SPAWN witch рожки' });
+  assert.equal(created.spawned, true);
+  assert.equal(created.pumpkin.customization.skin, 'witch');
+  assert.equal(created.pumpkin.customization.hat, 'horns');
+  assert.equal(service.handle({ ...donor, id: 'shared-event-id', amount: 100, message: '!spawn ghost' }).duplicate, true);
+  const existingOwner = service.handle({ ...donor, id: 'existing-owner', amount: 25, message: '' });
+  assert.equal(existingOwner.spawned, false);
+  assert.equal(existingOwner.pumpkin.totalDonated, 125);
+
+  const otherProvider = service.handle({
+    ...donor, provider: 'memealerts', id: 'shared-event-id', amount: 100, message: '!spawn ghost',
+  });
+  assert.equal(otherProvider.spawned, true);
+  assert.equal(otherProvider.pumpkin.customization.skin, 'ghost');
+  assert.equal(db.listPumpkins().length, 4);
+  const legacyUpdate = service.handle({
+    id: 'legacy-update', provider: 'donationalerts', ownerId: 'legacy-user', name: 'Legacy Viewer',
+    amount: 5, currency: 'RUB', message: '',
+  });
+  assert.equal(legacyUpdate.spawned, false);
+  assert.equal(legacyUpdate.pumpkin.id, legacy.pumpkin.id);
+  const linkedNameLegacy = service.handle({
+    id: 'legacy-name-linked', provider: 'donationalerts', ownerId: 'legacy-name-user', name: 'Legacy Name',
+    amount: 5, currency: 'RUB', message: '',
+  });
+  assert.equal(linkedNameLegacy.spawned, false);
+  assert.equal(linkedNameLegacy.pumpkin.id, nameOnlyLegacy.pumpkin.id);
+  assert.throws(
+    () => service.handle({ ...donor, provider: 'unknown', id: 'bad-provider', amount: 100, message: '!spawn' }),
+    { message: 'invalid_donation_event' },
+  );
+});
+
+test('new pumpkin spawn is refused when no safe scene position exists and mismatched currency does not accrue', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  db.updateSettings({
+    minSpawnDonation: 0,
+    spawnCommand: '!spawn',
+    noGoZone: { enabled: true, x: 0, y: 0, width: config.scene.width, height: config.scene.height },
+  }, config);
+  const events = [];
+  const service = new DonationService({ db, config, emit: (event) => events.push(event), idFactory: () => 'no-position' });
+  const noPosition = service.handle({
+    provider: 'donatex', id: 'no-position-event', ownerId: 'viewer-id', name: 'Viewer',
+    amount: 50, currency: 'RUB', message: '!spawn',
+  });
+  assert.equal(noPosition.spawned, false);
+  assert.equal(db.listPumpkins().length, 0);
+  db.updateSettings({ noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 } }, config);
+  const wrongCurrency = service.handle({
+    provider: 'memealerts', id: 'wrong-currency', ownerId: 'other-id', name: 'Other Viewer',
+    amount: 500, currency: 'MEMECOIN', message: '!spawn',
+  });
+  assert.equal(wrongCurrency.spawned, false);
+  assert.equal(wrongCurrency.currencyApplied, false);
+  assert.equal(wrongCurrency.pumpkin, null);
+  assert.equal(events.length, 0);
+  db.close();
+});
+
+test('donation validation rejects malformed normalized events before recording them', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const service = new DonationService({ db, config });
+  const valid = { id: 'valid-event', provider: 'donatex', name: 'Viewer', amount: 10, currency: 'RUB', message: '' };
+  const invalidEvents = [
+    { ...valid, id: '' },
+    { ...valid, name: '' },
+    { ...valid, amount: Number.POSITIVE_INFINITY },
+    { ...valid, amount: 0 },
+    { ...valid, amount: 1e12 + 1 },
+    { ...valid, currency: '' },
+    { ...valid, currency: {} },
+    { ...valid, message: { private: true } },
+  ];
+  for (const event of invalidEvents) assert.throws(() => service.handle(event), { message: 'invalid_donation_event' });
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM donations').get().count, 0);
+  assert.equal(db.listPumpkins().length, 0);
   db.close();
 });
 
@@ -156,7 +316,8 @@ test('reward IDs are required and repeat redemptions are ignored', () => {
   const config = testConfig({ TWITCH_REWARD_INFLATE_ID: 'reward-inflate' });
   const db = testDatabase(config);
   const donation = new DonationService({ db, config, idFactory: () => 'pumpkin-1' });
-  donation.handle({ id: 'donation-1', userId: 'twitch-1', username: 'viewer', name: 'Viewer', amount: 100, currency: 'RUB' });
+  donation.handle({ id: 'donation-1', userId: 'twitch-1', username: 'viewer', name: 'Viewer', amount: 100, currency: 'RUB', message: '!тыковка' });
+  db.updatePumpkin('pumpkin-1', { twitchUserId: 'twitch-1', twitchUsername: 'viewer' });
   const actions = [];
   const rewards = new RewardService({ db, config, emit: (event, payload) => actions.push([event, payload]) });
   const result = rewards.handle({ id: 'redemption-1', rewardId: 'reward-inflate', userId: 'twitch-1', userLogin: 'viewer' });
@@ -171,8 +332,10 @@ test('redemptions match exact reward IDs and resolve the Twitch user ID before l
   const config = testConfig({ TWITCH_REWARD_INFLATE_ID: 'reward-inflate' });
   const db = testDatabase(config);
   const donations = new DonationService({ db, config, idFactory: (() => { let id = 0; return () => `pumpkin-${++id}`; })() });
-  donations.handle({ id: 'donation-1', userId: 'twitch-1', username: 'viewer-one', name: 'Viewer One', amount: 100, currency: 'RUB' });
-  donations.handle({ id: 'donation-2', userId: 'twitch-2', username: 'viewer-two', name: 'Viewer Two', amount: 100, currency: 'RUB' });
+  donations.handle({ id: 'donation-1', userId: 'twitch-1', username: 'viewer-one', name: 'Viewer One', amount: 100, currency: 'RUB', message: '!тыковка' });
+  donations.handle({ id: 'donation-2', userId: 'twitch-2', username: 'viewer-two', name: 'Viewer Two', amount: 100, currency: 'RUB', message: '!тыковка' });
+  db.updatePumpkin('pumpkin-1', { twitchUserId: 'twitch-1', twitchUsername: 'viewer-one' });
+  db.updatePumpkin('pumpkin-2', { twitchUserId: 'twitch-2', twitchUsername: 'viewer-two' });
   const events = [];
   const service = new RewardService({ db, config, emit: (event, payload) => events.push([event, payload]) });
 
@@ -204,4 +367,39 @@ test('reward mappings persist after reopening the SQLite database', () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('spawn rule settings persist and broadcast through Socket.IO without accepting invalid values', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const ioEvents = [];
+  const socketEvents = new Map();
+  let connection;
+  const io = {
+    use() {},
+    on(event, handler) { if (event === 'connection') connection = handler; },
+    emit(...args) { ioEvents.push(args); },
+  };
+  attachSocketHandlers(io, { config, db, statuses: { all: () => [] } });
+  const socket = {
+    data: { admin: true },
+    handshake: { headers: {} },
+    on(event, handler) { socketEvents.set(event, handler); },
+    emit(...args) { ioEvents.push(['socket', ...args]); },
+  };
+  db.updateSettings({ minSpawnDonation: 125, spawnCommand: '!gourd' }, config);
+  connection(socket);
+  const initialScene = ioEvents.find(([target, event]) => target === 'socket' && event === 'scene:init')?.[2];
+  assert.equal(initialScene.settings.minSpawnDonation, 125);
+  assert.equal(initialScene.settings.spawnCommand, '!gourd');
+
+  socketEvents.get('admin:settings:update')({ minSpawnDonation: 250, spawnCommand: '!pumpkin' });
+  const update = ioEvents.findLast(([event]) => event === 'settings:updated')?.[1]?.settings;
+  assert.equal(update.minSpawnDonation, 250);
+  assert.equal(update.spawnCommand, '!pumpkin');
+  socketEvents.get('admin:settings:update')({ minSpawnDonation: -1, spawnCommand: '' });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_min_spawn_donation' }]);
+  assert.equal(db.getSettings(config).minSpawnDonation, 250);
+  assert.equal(db.getSettings(config).spawnCommand, '!pumpkin');
+  db.close();
 });

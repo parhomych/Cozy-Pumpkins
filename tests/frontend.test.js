@@ -64,6 +64,9 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(html, /data-connection-status/);
   assert.match(html, /data-account/);
   assert.match(html, /data-provider-message/);
+  for (const provider of ['donationalerts', 'donatex', 'memealerts']) {
+    assert.match(html, new RegExp(`data-provider="${provider}"`));
+  }
   const source = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
   assert.match(source, /eyeFrequency/);
   assert.match(source, /mouthFrequency/);
@@ -76,12 +79,36 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(source, /isEnabled/);
   assert.match(source, /value\.authStatus/);
   assert.match(source, /value\.connectionStatus/);
-  assert.match(source, /value\.account \|\| value\.providerLogin/);
+  assert.match(source, /value\.account \|\| '—'/);
   assert.match(source, /value\.message \|\| ''/);
-  assert.match(source, /value\.provider === 'twitch' \? 'Disconnected' : 'Not connected'/);
+  assert.match(source, /donatex: 'DonatEx'/);
+  assert.match(source, /memealerts: 'Meme Alerts'/);
+  assert.doesNotMatch(source, /Reconnect by disconnecting and connecting again/);
+  assert.doesNotMatch(source, /providerLogin/);
   assert.doesNotMatch(source, /animation: \{ eyeFrequency: Number\(\$\('#eye-frequency'\)/);
   const overlay = await readFile(new URL('../public/js/overlay-app.js', import.meta.url), 'utf8');
   assert.match(overlay, /renderer\.sync\(Array\.isArray\(scene\.pumpkins\)/);
   assert.match(overlay, /settings:updated/);
   assert.match(overlay, /renderer\.update\(pumpkin\)/);
+});
+
+test('spawn rule controls and read-only keyword previews stay isolated from the live scene', async () => {
+  const html = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
+  assert.match(html, /id="min-spawn-donation"/);
+  assert.match(html, /id="spawn-command"/);
+  assert.match(html, /id="save-spawn-settings"/);
+  assert.match(html, /id="customization-catalog"/);
+  const source = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
+  assert.match(source, /loadSpawnSettings/);
+  assert.match(source, /customizationCatalog/);
+  assert.match(source, /message: state\.settings\.spawnCommand/);
+  const start = source.indexOf('function renderCustomizationCatalog(');
+  const end = source.indexOf('\nfunction ', start + 1);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const renderer = source.slice(start, end);
+  assert.match(renderer, /new PumpkinCharacter/);
+  assert.match(renderer, /keywords/);
+  assert.match(renderer, /destroy\(\)/);
+  assert.doesNotMatch(renderer, /state\.socket|renderer\.sync|renderer\.update/);
 });

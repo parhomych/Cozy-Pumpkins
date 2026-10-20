@@ -1,0 +1,249 @@
+- generic [ref=f6e3]:
+  - banner [ref=f6e4]:
+    - button "Открыть меню документации" [ref=f6e5] [cursor=pointer]
+    - link [ref=f6e8] [cursor=pointer]:
+      - /url: /api-docs
+      - paragraph [ref=f6e9]: DonateXdev.
+    - button "Поиск по документации" [ref=f6e10] [cursor=pointer]:
+      - generic [ref=f6e13]: Поиск…
+      - generic [ref=f6e14]:
+        - generic [ref=f6e15]: ⌘
+        - generic [ref=f6e16]: K
+    - link "Войти" [ref=f6e17] [cursor=pointer]:
+      - /url: /signin
+    - link "Создать приложение" [ref=f6e18] [cursor=pointer]:
+      - /url: /signin?ReturnUrl=%2Fstreamer%2Fsettings%23oauth-apps
+  - main [ref=f6e20]:
+    - generic [ref=f6e21]:
+      - generic [ref=f6e22]:
+        - generic [ref=f6e23]:
+          - paragraph [ref=f6e24]: Начало работы
+          - button [ref=f6e26] [cursor=pointer]
+        - heading "Авторизация" [level=1] [ref=f6e34]
+        - paragraph [ref=f6e35]: "Как получить доступ к API DonateX: персональный external token для своего канала или OAuth 2.0 с PKCE для приложений."
+      - generic [ref=f6e36]:
+        - generic [ref=f6e37]:
+          - heading [level=2] [ref=f6e38]:
+            - link "Ссылка на раздел" [ref=f6e39] [cursor=pointer]:
+              - /url: "#choose"
+            - text: Какой способ выбрать
+          - generic [ref=f6e42]:
+            - generic [ref=f6e43]:
+              - generic [ref=f6e48]:
+                - paragraph [ref=f6e49]: External token
+                - paragraph [ref=f6e50]: Свой канал, бот или оверлей
+              - generic [ref=f6e51]: Один бессрочный токен с полным доступом к вашему аккаунту. Без scopes, без refresh — скопировал и работаешь.
+            - generic [ref=f6e52]:
+              - generic [ref=f6e57]:
+                - paragraph [ref=f6e58]: OAuth 2.0 + PKCE
+                - paragraph [ref=f6e59]: Сервис для многих стримеров
+              - generic [ref=f6e60]: Стример входит через DonateX и сам выбирает, какие права выдать. Токены живут час и обновляются через refresh_token.
+        - generic [ref=f6e61]:
+          - heading [level=2] [ref=f6e62]:
+            - link "Ссылка на раздел" [ref=f6e63] [cursor=pointer]:
+              - /url: "#external-token"
+            - text: External token
+          - list [ref=f6e66]:
+            - listitem [ref=f6e67]: Откройте кабинет → Настройки → API и доступ и скопируйте токен.
+            - listitem [ref=f6e68]:
+              - text: Передавайте его в заголовке
+              - code [ref=f6e69]: "Authorization: Bearer"
+              - text: .
+            - listitem [ref=f6e70]: "Если токен утёк — перевыпустите его там же: старый перестанет работать сразу."
+          - generic [ref=f6e71]:
+            - generic [ref=f6e72]:
+              - paragraph [ref=f6e74]: Запрос с external token
+              - button "Скопировать" [ref=f6e75] [cursor=pointer]
+            - code [ref=f6e80]: "curl \"https://donatex.gg/api/v1/donations?skip=0&take=20\" \\ -H \"Authorization: Bearer YOUR_EXTERNAL_TOKEN\""
+          - generic [ref=f6e81]:
+            - heading "Где можно передать токен" [level=4] [ref=f6e82]
+            - generic [ref=f6e83]:
+              - generic [ref=f6e84]:
+                - generic [ref=f6e85]:
+                  - code [ref=f6e86]: Authorization
+                  - generic [ref=f6e87]: header
+                - paragraph [ref=f6e88]:
+                  - code [ref=f6e89]: Bearer <token>
+                  - text: — рекомендуемый способ
+              - generic [ref=f6e90]:
+                - generic [ref=f6e91]:
+                  - code [ref=f6e92]: X-External-Token
+                  - generic [ref=f6e93]: header
+                - paragraph [ref=f6e94]: Сам токен без префикса
+              - generic [ref=f6e95]:
+                - generic [ref=f6e96]:
+                  - code [ref=f6e97]: access_token
+                  - generic [ref=f6e98]: query
+                - paragraph [ref=f6e99]: "Для SignalR и клиентов, которые не умеют в заголовки. Не используйте в обычных запросах: URL попадает в логи"
+              - generic [ref=f6e100]:
+                - generic [ref=f6e101]:
+                  - code [ref=f6e102]: token
+                  - generic [ref=f6e103]: query
+                - paragraph [ref=f6e104]:
+                  - text: Устаревший синоним
+                  - code [ref=f6e105]: access_token
+          - generic [ref=f6e110]:
+            - paragraph [ref=f6e111]: Не публикуйте токен
+            - text: External token даёт полный доступ к вашему аккаунту. Не вставляйте его в клиентский код сайта и в публичные репозитории. Для браузерных приложений используйте OAuth с PKCE.
+        - generic [ref=f6e112]:
+          - heading [level=2] [ref=f6e113]:
+            - link "Ссылка на раздел" [ref=f6e114] [cursor=pointer]:
+              - /url: "#oauth"
+            - text: OAuth 2.0 + PKCE
+          - paragraph [ref=f6e117]:
+            - text: Authorization Code flow с обязательным PKCE. Приложение регистрируется в кабинете — там же выдаются
+            - code [ref=f6e118]: client_id
+            - text: и, для серверных приложений,
+            - code [ref=f6e119]: client_secret
+            - text: .
+          - list [ref=f6e120]:
+            - listitem [ref=f6e121]:
+              - text: Сгенерируйте
+              - code [ref=f6e122]: code_verifier
+              - text: и
+              - code [ref=f6e123]: code_challenge
+              - text: .
+            - listitem [ref=f6e124]:
+              - text: Перенаправьте пользователя на
+              - code [ref=f6e125]: /api/connect/authorize
+              - text: — он войдёт и подтвердит права.
+            - listitem [ref=f6e126]:
+              - text: DonateX вернёт его на ваш
+              - code [ref=f6e127]: redirect_uri
+              - text: с параметром
+              - code [ref=f6e128]: code
+              - text: .
+            - listitem [ref=f6e129]:
+              - text: Обменяйте
+              - code [ref=f6e130]: code
+              - text: на токены через
+              - code [ref=f6e131]: /api/connect/token
+              - text: .
+        - generic [ref=f6e132]:
+          - heading [level=3] [ref=f6e133]:
+            - link "Ссылка на раздел" [ref=f6e134] [cursor=pointer]:
+              - /url: "#pkce"
+            - text: 1. PKCE
+          - paragraph [ref=f6e137]:
+            - code [ref=f6e138]: code_verifier
+            - text: храните до конца авторизации и никому не передавайте, в URL уходит только
+            - code [ref=f6e139]: code_challenge
+            - text: .
+          - generic [ref=f6e140]:
+            - generic [ref=f6e141]:
+              - paragraph [ref=f6e143]: pkce.js
+              - button "Скопировать" [ref=f6e144] [cursor=pointer]
+            - code [ref=f6e149]: "// Браузер или Node.js 18+ const toBase64Url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))) .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, ''); export async function createPkce() { const codeVerifier = toBase64Url(crypto.getRandomValues(new Uint8Array(48))); const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(codeVerifier)); return { codeVerifier, codeChallenge: toBase64Url(digest) }; }"
+        - generic [ref=f6e150]:
+          - heading [level=3] [ref=f6e151]:
+            - link "Ссылка на раздел" [ref=f6e152] [cursor=pointer]:
+              - /url: "#authorize"
+            - text: 2. Авторизация пользователя
+          - generic [ref=f6e155]:
+            - generic [ref=f6e156]:
+              - paragraph [ref=f6e158]: GET /api/connect/authorize
+              - button "Скопировать" [ref=f6e159] [cursor=pointer]
+            - code [ref=f6e164]: https://donatex.gg/api/connect/authorize ?client_id=YOUR_CLIENT_ID &redirect_uri=https%3A%2F%2Fyour.app%2Fcallback &response_type=code &scope=openid%20offline_access%20donations.read%20donations.write &code_challenge=PKCE_CHALLENGE &code_challenge_method=S256 &state=RANDOM_STATE
+          - generic [ref=f6e166]:
+            - generic [ref=f6e167]:
+              - generic [ref=f6e168]:
+                - code [ref=f6e169]: client_id
+                - generic [ref=f6e170]: string
+                - generic [ref=f6e171]: обязательный
+              - paragraph [ref=f6e172]: ID приложения
+            - generic [ref=f6e173]:
+              - generic [ref=f6e174]:
+                - code [ref=f6e175]: redirect_uri
+                - generic [ref=f6e176]: url
+                - generic [ref=f6e177]: обязательный
+              - paragraph [ref=f6e178]: Адрес возврата, точно как в настройках приложения
+            - generic [ref=f6e179]:
+              - generic [ref=f6e180]:
+                - code [ref=f6e181]: response_type
+                - generic [ref=f6e182]: string
+                - generic [ref=f6e183]: обязательный
+              - paragraph [ref=f6e184]:
+                - text: Всегда
+                - code [ref=f6e185]: code
+            - generic [ref=f6e186]:
+              - generic [ref=f6e187]:
+                - code [ref=f6e188]: scope
+                - generic [ref=f6e189]: string
+                - generic [ref=f6e190]: обязательный
+              - paragraph [ref=f6e191]:
+                - text: Права через пробел, например
+                - code [ref=f6e192]: openid offline_access donations.read
+            - generic [ref=f6e193]:
+              - generic [ref=f6e194]:
+                - code [ref=f6e195]: code_challenge
+                - generic [ref=f6e196]: string
+                - generic [ref=f6e197]: обязательный
+              - paragraph [ref=f6e198]: Base64Url(SHA-256(code_verifier))
+            - generic [ref=f6e199]:
+              - generic [ref=f6e200]:
+                - code [ref=f6e201]: code_challenge_method
+                - generic [ref=f6e202]: string
+                - generic [ref=f6e203]: обязательный
+              - paragraph [ref=f6e204]:
+                - text: Всегда
+                - code [ref=f6e205]: S256
+            - generic [ref=f6e206]:
+              - generic [ref=f6e207]:
+                - code [ref=f6e208]: state
+                - generic [ref=f6e209]: string
+                - generic [ref=f6e210]: необязательный
+              - paragraph [ref=f6e211]: Случайная строка для защиты от CSRF — сверьте её в колбэке
+        - generic [ref=f6e212]:
+          - heading [level=3] [ref=f6e213]:
+            - link "Ссылка на раздел" [ref=f6e214] [cursor=pointer]:
+              - /url: "#token"
+            - text: 3. Обмен кода на токен
+          - paragraph [ref=f6e217]:
+            - text: Запрос
+            - code [ref=f6e218]: application/x-www-form-urlencoded
+            - text: . Публичные клиенты (SPA, мобильные приложения) не передают
+            - code [ref=f6e219]: client_secret
+            - text: — им хватает
+            - code [ref=f6e220]: code_verifier
+            - text: .
+          - generic [ref=f6e221]:
+            - generic [ref=f6e222]:
+              - paragraph [ref=f6e224]: POST /api/connect/token
+              - button "Скопировать" [ref=f6e225] [cursor=pointer]
+            - code [ref=f6e230]: curl -X POST "https://donatex.gg/api/connect/token" \ -d "grant_type=authorization_code" \ -d "code=CODE_FROM_CALLBACK" \ -d "redirect_uri=https://your.app/callback" \ -d "client_id=YOUR_CLIENT_ID" \ -d "client_secret=YOUR_CLIENT_SECRET" \ -d "code_verifier=ORIGINAL_CODE_VERIFIER"
+          - generic [ref=f6e231]:
+            - generic [ref=f6e232]:
+              - paragraph [ref=f6e234]: Ответ
+              - button "Скопировать" [ref=f6e235] [cursor=pointer]
+            - code [ref=f6e240]: "{ \"access_token\": \"eyJhbGciOiJSUzI1NiIs...\", \"token_type\": \"Bearer\", \"expires_in\": 3600, \"scope\": \"openid offline_access donations.read donations.write\", \"refresh_token\": \"tGzv3JOkF0XG5Qx2TlKWIA\" }"
+        - generic [ref=f6e241]:
+          - heading [level=3] [ref=f6e242]:
+            - link "Ссылка на раздел" [ref=f6e243] [cursor=pointer]:
+              - /url: "#refresh"
+            - text: 4. Обновление и отзыв
+          - paragraph [ref=f6e246]:
+            - code [ref=f6e247]: access_token
+            - text: живёт час. Чтобы получить
+            - code [ref=f6e248]: refresh_token
+            - text: ", запросите scope"
+            - code [ref=f6e249]: offline_access
+            - text: . Каждый refresh возвращает новую пару токенов — сохраняйте обе.
+          - generic [ref=f6e250]:
+            - generic [ref=f6e251]:
+              - paragraph [ref=f6e253]: Обновление токена
+              - button "Скопировать" [ref=f6e254] [cursor=pointer]
+            - code [ref=f6e259]: curl -X POST "https://donatex.gg/api/connect/token" \ -d "grant_type=refresh_token" \ -d "refresh_token=REFRESH_TOKEN" \ -d "client_id=YOUR_CLIENT_ID" \ -d "client_secret=YOUR_CLIENT_SECRET"
+          - generic [ref=f6e260]:
+            - generic [ref=f6e261]:
+              - paragraph [ref=f6e263]: Отзыв токена при выходе пользователя
+              - button "Скопировать" [ref=f6e264] [cursor=pointer]
+            - code [ref=f6e269]: curl -X POST "https://donatex.gg/api/connect/revoke" \ -d "token=REFRESH_OR_ACCESS_TOKEN" \ -d "client_id=YOUR_CLIENT_ID" \ -d "client_secret=YOUR_CLIENT_SECRET"
+      - generic [ref=f6e270]:
+        - link "Назад Что нового" [ref=f6e271] [cursor=pointer]:
+          - /url: /api-docs/changelog
+          - paragraph [ref=f6e272]: Назад
+          - generic [ref=f6e273]: Что нового
+        - link "Дальше Scopes" [ref=f6e278] [cursor=pointer]:
+          - /url: /api-docs/scopes
+          - paragraph [ref=f6e279]: Дальше
+          - generic [ref=f6e280]: Scopes

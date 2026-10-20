@@ -11,9 +11,12 @@ export const CUSTOMIZATION_ALIASES = {
 
 const normalizedAliases = Object.fromEntries(Object.entries(CUSTOMIZATION_ALIASES).map(([slot, values]) => [slot, Object.fromEntries(Object.entries(values).flatMap(([value, aliases]) => aliases.map((alias) => [normalizeText(alias).toLocaleLowerCase(), value])))]));
 const slots = Object.keys(CUSTOMIZATION_ALIASES);
-export function parseCustomization(message, base = DEFAULT_CUSTOMIZATION) {
+export function parseCustomization(message, base = DEFAULT_CUSTOMIZATION, command = '!тыковка') {
   const text = normalizeText(message, 4000).toLocaleLowerCase();
-  const result = { ...DEFAULT_CUSTOMIZATION, ...base }; const match = /^!тыковка(?:\s+|$)(.*)$/iu.exec(text);
+  const result = { ...DEFAULT_CUSTOMIZATION, ...base };
+  const prefix = String(command || '').normalize('NFKC').trim().replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  if (!prefix) return { customization: result, commandDetected: false, recognized: false };
+  const match = new RegExp(`^${prefix}(?:\\s+|$)(.*)$`, 'iu').exec(text);
   if (!match) return { customization: result, commandDetected: false, recognized: false };
   const tokens = match[1].split(/\s+/u).filter(Boolean); let recognized = false;
   for (let i = 0; i < tokens.length; i += 1) {
@@ -34,3 +37,9 @@ export function sanitizeCustomization(value, base = DEFAULT_CUSTOMIZATION) {
   return result;
 }
 export function customizationValues() { return Object.fromEntries(slots.map((slot) => [slot, Object.keys(CUSTOMIZATION_ALIASES[slot])])); }
+export function customizationCatalog() {
+  return slots.map((slot) => ({
+    slot,
+    values: Object.entries(CUSTOMIZATION_ALIASES[slot]).map(([value, keywords]) => ({ value, keywords: [...keywords] })),
+  }));
+}

@@ -82,6 +82,51 @@ test('server serves status and both user-facing HTML pages without leaking secre
   }
 });
 
+test('spawn settings persist, reject invalid updates, and expose the read-only customization catalog', async () => {
+  const config = testConfig();
+  const runtime = createServer({ config, db: new Database(':memory:'), publicDir: null });
+  await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+  const port = runtime.server.address().port;
+  try {
+    const firstRead = await request(port, '/api/settings');
+    const defaults = JSON.parse(firstRead.body);
+    assert.equal(defaults.settings.minSpawnDonation, 0);
+    assert.equal(defaults.settings.spawnCommand, '!тыковка');
+    assert.ok(Array.isArray(defaults.customizationCatalog));
+    const skinGroup = defaults.customizationCatalog.find(({ slot }) => slot === 'skin');
+    assert.ok(skinGroup.values.some(({ value, keywords }) => value === 'witch' && keywords.includes('ведьма')));
+
+    const cookie = firstRead.headers['set-cookie']?.[0]?.split(';')[0];
+    const update = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ minSpawnDonation: 250, spawnCommand: '  !pumpkin  ' }),
+    });
+    assert.equal(update.status, 200);
+    assert.equal(JSON.parse(update.body).settings.minSpawnDonation, 250);
+    assert.equal(JSON.parse(update.body).settings.spawnCommand, '!pumpkin');
+    for (const invalid of [
+      { minSpawnDonation: -1 },
+      { minSpawnDonation: 'Infinity' },
+      { spawnCommand: '   ' },
+      { spawnCommand: 'x'.repeat(65) },
+    ]) {
+      const response = await request(port, '/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify(invalid),
+      });
+      assert.equal(response.status, 400);
+    }
+    const finalRead = await request(port, '/api/settings');
+    assert.equal(JSON.parse(finalRead.body).settings.minSpawnDonation, 250);
+    assert.equal(JSON.parse(finalRead.body).settings.spawnCommand, '!pumpkin');
+  } finally {
+    runtime.db.close();
+    await new Promise((resolve) => runtime.server.close(resolve));
+  }
+});
+
 test('Twitch reward catalog requires auth and returns only normalized public reward fields', async () => {
   const calls = [];
   const fetchImpl = async (url, options) => {
@@ -182,6 +227,61 @@ test('saved Twitch authorization is not reported as live and stays independent f
   } finally {
     runtime.db.close();
     await new Promise((resolve) => runtime.server.close(resolve));
+  }
+});
+
+test('donation OAuth callbacks start providers independently and logout stops only the selected client', async () => {
+  const config = testConfig({
+    DA_CLIENT_ID: 'da-client',
+    DA_CLIENT_SECRET: 'da-secret',
+    DONATEX_CLIENT_ID: 'donatex-client',
+    DONATEX_CLIENT_SECRET: 'donatex-secret',
+    MEMEALERTS_CLIENT_ID: 'memealerts-client',
+    MEMEALERTS_CLIENT_SECRET: 'memealerts-secret',
+  });
+  const db = new Database(':memory:');
+  const runtime = createServer({
+    config,
+    db,
+    publicDir: null,
+    fetchImpl: async (url) => {
+      if (url.endsWith('/oauth/token') || url.endsWith('/api/connect/token')) {
+        return new Response(JSON.stringify({ access_token: 'provider-access-token', refresh_token: 'provider-refresh-token', expires_in: 3600 }));
+      }
+      return new Response(JSON.stringify({ data: { id: 'provider-account-id', username: 'channel-name', displayName: 'Channel Name' } }));
+    },
+  });
+  const started = [];
+  const stopped = [];
+  for (const provider of ['donationalerts', 'donatex', 'memealerts']) {
+    runtime.providerEvents[provider].start = async () => { started.push(provider); };
+    runtime.providerEvents[provider].stop = async () => { stopped.push(provider); };
+  }
+  await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+  const port = runtime.server.address().port;
+  try {
+    const statusResponse = await request(port, '/api/status');
+    const cookie = statusResponse.headers['set-cookie']?.[0]?.split(';')[0];
+    for (const provider of ['donationalerts', 'donatex', 'memealerts']) {
+      const authorization = new URL(runtime.oauth.authorizationUrl(provider));
+      const query = new URLSearchParams({ code: 'provider-auth-code', state: authorization.searchParams.get('state') });
+      const callback = await request(port, `/api/auth/${provider}/callback?${query}`);
+      assert.equal(callback.status, 302);
+      assert.equal(runtime.statuses.public(provider).authStatus, 'Connected');
+      assert.deepEqual(started, ['donationalerts', 'donatex', 'memealerts'].slice(0, started.length));
+    }
+    const integrations = JSON.parse((await request(port, '/api/status')).body).integrations;
+    assert.equal(integrations.length, 4);
+    assert.equal(JSON.stringify(integrations).includes('provider-account-id'), false);
+    const logout = await request(port, '/api/auth/memealerts/logout', { method: 'POST', headers: { Cookie: cookie } });
+    assert.equal(logout.status, 200);
+    assert.deepEqual(stopped, ['memealerts']);
+    assert.equal(runtime.tokenStore.get('memealerts'), null);
+    assert.notEqual(runtime.tokenStore.get('donationalerts'), null);
+    assert.notEqual(runtime.tokenStore.get('donatex'), null);
+  } finally {
+    await runtime.shutdown();
+    db.close();
   }
 });
 

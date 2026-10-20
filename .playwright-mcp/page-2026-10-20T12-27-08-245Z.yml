@@ -1,0 +1,86 @@
+- generic [ref=f7e3]:
+  - banner [ref=f7e4]:
+    - button "Открыть меню документации" [ref=f7e5] [cursor=pointer]
+    - link [ref=f7e8] [cursor=pointer]:
+      - /url: /api-docs
+      - paragraph [ref=f7e9]: DonateXdev.
+    - button "Поиск по документации" [ref=f7e10] [cursor=pointer]:
+      - generic [ref=f7e13]: Поиск…
+      - generic [ref=f7e14]:
+        - generic [ref=f7e15]: ⌘
+        - generic [ref=f7e16]: K
+    - link "Войти" [ref=f7e17] [cursor=pointer]:
+      - /url: /signin
+    - link "Создать приложение" [ref=f7e18] [cursor=pointer]:
+      - /url: /signin?ReturnUrl=%2Fstreamer%2Fsettings%23oauth-apps
+  - main [ref=f7e20]:
+    - generic [ref=f7e21]:
+      - generic [ref=f7e22]:
+        - generic [ref=f7e23]:
+          - paragraph [ref=f7e24]: Начало работы
+          - button [ref=f7e26] [cursor=pointer]
+        - heading "Scopes" [level=1] [ref=f7e34]
+        - paragraph [ref=f7e35]: Какие права (scopes) нужны OAuth-приложению для каждого метода API DonateX.
+      - generic [ref=f7e36]:
+        - generic [ref=f7e37]:
+          - paragraph [ref=f7e38]: Scopes ограничивают, что OAuth-приложение может делать от имени стримера. Запрашивайте только нужные — стример видит их на экране согласия. External token работает без scopes и имеет полный доступ.
+          - generic [ref=f7e43]:
+            - text: Если токену не хватает права, API ответит
+            - code [ref=f7e44]: 403 Forbidden
+            - text: . Нужный scope указан у каждого метода в документации.
+        - generic [ref=f7e45]:
+          - heading [level=2] [ref=f7e46]:
+            - link "Ссылка на раздел" [ref=f7e47] [cursor=pointer]:
+              - /url: "#list"
+            - text: Доступные scopes
+          - generic [ref=f7e50]:
+            - generic [ref=f7e51]:
+              - code [ref=f7e52]: donations.read
+              - paragraph [ref=f7e53]: Чтение истории донатов, топа донатеров, активной цели и текущего трека.
+              - generic [ref=f7e54]:
+                - code [ref=f7e55]: GET /v1/donations
+                - code [ref=f7e56]: GET /v1/goals/current
+                - code [ref=f7e57]: GET /v1/top-donators
+                - code [ref=f7e58]: GET /v1/music/current
+            - generic [ref=f7e59]:
+              - code [ref=f7e60]: donations.write
+              - paragraph [ref=f7e61]: "Управление алертами и музыкой: тестовые донаты, скипы, очистка очереди и повтор доната."
+              - generic [ref=f7e62]:
+                - code [ref=f7e63]: POST /v1/test-donation
+                - code [ref=f7e64]: POST /v1/donations/skip-current
+                - code [ref=f7e65]: "POST /v1/donations/{id}/skip"
+                - code [ref=f7e66]: POST /v1/donations/skip-all
+                - code [ref=f7e67]: "POST /v1/donations/{id}/rerun"
+                - code [ref=f7e68]: POST /v1/music/skip-current
+            - generic [ref=f7e69]:
+              - code [ref=f7e70]: donations.subscribe
+              - paragraph [ref=f7e71]: Подписки на вебхуки и подключение к realtime-хабу.
+              - generic [ref=f7e72]:
+                - code [ref=f7e73]: /v1/webhooks/subscriptions
+                - code [ref=f7e74]: SignalR /api/public-donations-hub
+            - generic [ref=f7e75]:
+              - code [ref=f7e76]: user.read
+              - paragraph [ref=f7e77]: Профиль стримера и его ИИ-персонажи.
+              - generic [ref=f7e78]:
+                - code [ref=f7e79]: GET /v1/user/me
+                - code [ref=f7e80]: GET /v1/ai/characters
+                - code [ref=f7e81]: "GET /v1/ai/characters/{id}"
+            - generic [ref=f7e82]:
+              - code [ref=f7e83]: offline_access
+              - paragraph [ref=f7e84]: Выдача refresh_token, чтобы обновлять доступ без повторного входа пользователя.
+              - code [ref=f7e86]: POST /api/connect/token
+            - generic [ref=f7e87]:
+              - code [ref=f7e88]: openid
+              - paragraph [ref=f7e89]: OIDC-идентификатор пользователя в токене.
+            - generic [ref=f7e90]:
+              - code [ref=f7e91]: profile
+              - paragraph [ref=f7e92]: Имя пользователя и аватар в токене.
+      - generic [ref=f7e93]:
+        - link "Назад Авторизация" [ref=f7e94] [cursor=pointer]:
+          - /url: /api-docs/authentication
+          - paragraph [ref=f7e95]: Назад
+          - generic [ref=f7e96]: Авторизация
+        - link "Дальше Ошибки" [ref=f7e101] [cursor=pointer]:
+          - /url: /api-docs/errors
+          - paragraph [ref=f7e102]: Дальше
+          - generic [ref=f7e103]: Ошибки
