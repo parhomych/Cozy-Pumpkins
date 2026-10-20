@@ -21,7 +21,10 @@ export function sanitizeRewardMapping(value) {
 export function rewardMappingPatch(value, current = {}) {
   const sanitized = sanitizeRewardMapping(value);
   if (!sanitized) return null;
-  return { ...current, ...sanitized };
+  const mapping = { ...current, ...sanitized };
+  const rewardIds = Object.values(mapping).filter(Boolean);
+  if (new Set(rewardIds).size !== rewardIds.length) return null;
+  return mapping;
 }
 
 function parseRedemption(raw) {

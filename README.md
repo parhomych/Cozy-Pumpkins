@@ -15,7 +15,13 @@ npm ci
 cp .env.example .env
 ```
 
-For local development, the generated development secrets are sufficient. To use the available OAuth scaffolding, fill the Twitch and/or DonationAlerts values in `.env`; integrations remain independent. The current build stores OAuth state and tokens and implements safe logout, but provider-specific EventSub/Centrifugo live event loops still require separate implementation and verification, so `Connected` must not be treated as `Live`.
+For local development, the generated development secrets are sufficient. To connect Twitch, register the callback URL in `.env` with your Twitch developer application, then fill in `TWITCH_CLIENT_ID` and `TWITCH_CLIENT_SECRET`. The broadcaster must authorize the `channel:read:redemptions` scope. Twitch and DonationAlerts are independent integrations.
+
+After authorizing Twitch, use the Channel Points section in the admin panel to refresh the broadcaster's reward list and assign rewards to Cozy Pumpkins actions. Mappings are saved by Twitch reward ID, so renaming a reward does not change its action. Authorization and the live redemption connection are shown separately: a connected account is not live until the EventSub listener is active.
+
+The default Twitch callback is `http://localhost:3000/api/auth/twitch/callback`; register the exact value of `TWITCH_REDIRECT_URI`. Reward IDs do not need to be copied into `.env` when assigning actions in the admin panel. After a successful OAuth flow, the server starts the EventSub listener automatically; on server restart it attempts to restore the listener from the saved authorization.
+
+Twitch authorization states are `Disconnected`, `Connected`, and `Failed`. Live-event states are `Disconnected`, `Listening`, `Retrying`, and `Error`. Temporary socket interruptions trigger bounded automatic retries (up to eight attempts, with delays capped at 30 seconds); an expired authorization or revoked subscription requires reconnecting Twitch. Twitch logout stops its listener and clears local credentials regardless of whether Twitch confirms remote token revocation. This does not disconnect DonationAlerts.
 
 ## Run
 
@@ -42,7 +48,9 @@ npm run check
 - The overlay receives scene state and animation events only. OAuth secrets and token storage are server-only.
 - The backend validates coordinates against the 1920×1080 scene and No-Go Zone. Drag intermediate positions are broadcast but only the final validated position is persisted.
 - Donation event IDs and Twitch redemption IDs are unique in SQLite, so retries do not repeat effects.
+- Twitch rewards are matched by exact reward ID; the action runs only for the pumpkin linked to the redeeming viewer.
 - Twitch logout uses the official revoke endpoint and reports success only after the provider confirms it. DonationAlerts logout is explicitly local unless a documented remote revoke mechanism is verified.
+- Offline verification uses mocked Twitch API and WebSocket responses; `make test` does not require Twitch credentials or a network connection.
 
 ## Project layout
 

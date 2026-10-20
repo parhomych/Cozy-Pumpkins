@@ -1,10 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { DonationService } from '../src/engine/donations.js';
 import { RewardService } from '../src/engine/rewards.js';
 import { parseCustomization } from '../src/engine/customization-parser.js';
 import { clampPosition, dimensionsFor, isPositionValid } from '../src/engine/spatial-rules.js';
 import { testConfig, testDatabase } from './helpers.js';
+import { Database } from '../src/db/database.js';
 import { DEFAULT_ANIMATION, ANIMATION_LIMITS, animationPatch, sanitizeAnimation } from '../src/engine/animation.js';
 import { attachSocketHandlers } from '../src/socket/handlers.js';
 import { OAuthAdapters } from '../src/auth/oauth-adapters.js';
@@ -24,6 +28,40 @@ test('OAuth authorization URLs use the server API callback routes', () => {
     assert.equal(url.searchParams.get('redirect_uri'), config[provider].redirectUri);
     assert.equal(new URL(config[provider].redirectUri).pathname, `/api/auth/${provider}/callback`);
   }
+});
+
+test('Twitch OAuth validates broadcaster identity before saving the encrypted-token input', async () => {
+  const config = testConfig({ TWITCH_CLIENT_ID: 'twitch-client', TWITCH_CLIENT_SECRET: 'twitch-secret' });
+  let saved;
+  let providerStatus;
+  const oauth = new OAuthAdapters({
+    config,
+    tokenStore: { save: (provider, token) => { saved = { provider, token }; } },
+    statuses: { set: (provider, status) => { providerStatus = { provider, status }; } },
+    twitchApi: { getAuthenticatedUser: async (token) => {
+      assert.equal(token, 'private-access-token');
+      return { id: 'broadcaster-1', login: 'cozypumpkins', displayName: 'Cozy Pumpkins' };
+    } },
+    fetchImpl: async () => new Response(JSON.stringify({ access_token: 'private-access-token', refresh_token: 'private-refresh-token', expires_in: 3600, scope: ['channel:read:redemptions'] }), { status: 200 }),
+  });
+  const state = new URL(oauth.authorizationUrl('twitch')).searchParams.get('state');
+  const result = await oauth.callback('twitch', 'oauth-code', state);
+  assert.deepEqual(result, { connected: true, account: 'Cozy Pumpkins' });
+  assert.equal(saved.provider, 'twitch');
+  assert.equal(saved.token.providerUserId, 'broadcaster-1');
+  assert.equal(saved.token.providerLogin, 'cozypumpkins');
+  assert.equal(providerStatus.status.account, 'Cozy Pumpkins');
+  assert.equal(providerStatus.status.connectionStatus, 'Disconnected');
+
+  const failed = new OAuthAdapters({
+    config,
+    tokenStore: { save() { assert.fail('must not save an unvalidated Twitch identity'); } },
+    statuses: { set() { assert.fail('must not mark an unvalidated account connected'); } },
+    twitchApi: { getAuthenticatedUser: async () => { throw new Error('twitch_user_unavailable'); } },
+    fetchImpl: async () => new Response(JSON.stringify({ access_token: 'private-access-token' }), { status: 200 }),
+  });
+  const failedState = new URL(failed.authorizationUrl('twitch')).searchParams.get('state');
+  await assert.rejects(failed.callback('twitch', 'oauth-code', failedState), { message: 'twitch_user_unavailable' });
 });
 
 test('donation processing creates, evolves, and deduplicates a pumpkin', () => {
@@ -57,6 +95,9 @@ test('reward mapping sanitizer accepts supported actions and merges partial upda
   assert.deepEqual(rewardMappingPatch({ bat: 'reward-3' }, { inflate: 'reward-1' }), { inflate: 'reward-1', bat: 'reward-3' });
   assert.equal(rewardMappingPatch({ jump_on: 42 }, {}), null);
   assert.deepEqual(rewardMappingPatch({ morph_fly: '' }, {}), { morph_fly: '' });
+  assert.equal(rewardMappingPatch({ jump_on: 'reward-1' }, { inflate: 'reward-1' }), null);
+  assert.equal(rewardMappingPatch({ inflate: 'same', jump_on: 'same' }, {}), null);
+  assert.deepEqual(rewardMappingPatch({ jump_on: '' }, { inflate: 'reward-1' }), { inflate: 'reward-1', jump_on: '' });
 });
 
 test('animation settings persist globally and are broadcast through Socket.IO settings updates', () => {
@@ -124,4 +165,43 @@ test('reward IDs are required and repeat redemptions are ignored', () => {
   assert.equal(actions.some(([event]) => event === 'pumpkin:action'), true);
   assert.equal(rewards.handle({ id: 'redemption-2', rewardId: 'wrong-id', userId: 'twitch-1', userLogin: 'viewer' }).status, 'ignored_reward');
   db.close();
+});
+
+test('redemptions match exact reward IDs and resolve the Twitch user ID before login', () => {
+  const config = testConfig({ TWITCH_REWARD_INFLATE_ID: 'reward-inflate' });
+  const db = testDatabase(config);
+  const donations = new DonationService({ db, config, idFactory: (() => { let id = 0; return () => `pumpkin-${++id}`; })() });
+  donations.handle({ id: 'donation-1', userId: 'twitch-1', username: 'viewer-one', name: 'Viewer One', amount: 100, currency: 'RUB' });
+  donations.handle({ id: 'donation-2', userId: 'twitch-2', username: 'viewer-two', name: 'Viewer Two', amount: 100, currency: 'RUB' });
+  const events = [];
+  const service = new RewardService({ db, config, emit: (event, payload) => events.push([event, payload]) });
+
+  const result = service.handle({ id: 'redemption-priority', rewardId: 'reward-inflate', userId: 'twitch-1', userLogin: 'viewer-two' });
+  assert.equal(result.pumpkin.id, 'pumpkin-1');
+  assert.equal(service.handle({ id: 'redemption-priority', rewardId: 'reward-inflate', userId: 'twitch-1', userLogin: 'viewer-two' }).duplicate, true);
+  assert.equal(events.filter(([name]) => name === 'pumpkin:action').length, 1);
+
+  const positions = db.listPumpkins().map(({ id, x, y }) => ({ id, x, y }));
+  assert.equal(service.handle({ id: 'redemption-unlinked', rewardId: 'reward-inflate', userId: 'unknown-user', userLogin: 'unknown-user' }).status, 'no_pumpkin_for_user');
+  assert.equal(service.handle({ id: 'redemption-id-mismatch', rewardId: 'reward-inflate', userId: 'unmapped-id', userLogin: 'viewer-one' }).status, 'no_pumpkin_for_user');
+  assert.deepEqual(db.listPumpkins().map(({ id, x, y }) => ({ id, x, y })), positions);
+  assert.equal(service.handle({ id: 'redemption-wrong-id', rewardId: 'same-title-different-id', userId: 'twitch-1', userLogin: 'viewer-one' }).status, 'ignored_reward');
+  assert.deepEqual(db.listPumpkins().map(({ id, x, y }) => ({ id, x, y })), positions);
+  db.close();
+});
+
+test('reward mappings persist after reopening the SQLite database', () => {
+  const config = testConfig();
+  const directory = mkdtempSync(path.join(tmpdir(), 'cozy-pumpkins-rewards-'));
+  const databasePath = path.join(directory, 'settings.sqlite');
+  try {
+    const db = new Database(databasePath);
+    db.updateSettings({ rewardMapping: { inflate: 'renamed-later-reward', jump_on: '' } }, config);
+    db.close();
+    const reopened = new Database(databasePath);
+    assert.deepEqual(reopened.getSettings(config).rewardMapping, { inflate: 'renamed-later-reward', jump_on: '' });
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

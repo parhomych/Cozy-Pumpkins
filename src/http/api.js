@@ -13,7 +13,7 @@ import { rewardMappingPatch } from '../engine/rewards.js';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 function safeError(res, error, fallback = 'request_failed') { const code = error?.message && /^[a-z0-9_]+$/i.test(error.message) ? error.message : fallback; return res.status(code.includes('required') ? 401 : 400).json({ error: code }); }
 function statusesPayload(statuses) { return statuses.all ? statuses.all() : []; }
-export function createApiRouter({ config, db, statuses, oauth, tokenStore, donations = null, broadcast = () => {}, logger = console, publicDir = path.join(ROOT, 'public') } = {}) {
+export function createApiRouter({ config, db, statuses, oauth, tokenStore, donations = null, twitchApi = null, twitchEventSub = null, broadcast = () => {}, logger = console, publicDir = path.join(ROOT, 'public') } = {}) {
   const router = express.Router(); router.use(express.json({ limit: '64kb' }));
   router.get('/status', (req, res) => res.json({ ok: true, config: publicConfig(config), integrations: statusesPayload(statuses), devSimulator: config.nodeEnv !== 'production', serverTime: new Date().toISOString() }));
   router.get('/pumpkins', (req, res) => res.json({ pumpkins: db.listPumpkins().map(publicPumpkin) }));
@@ -23,10 +23,51 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
   router.get('/auth/twitch', requireAdminSession, (req, res) => { const url = oauth.authorizationUrl('twitch'); return url ? res.redirect(url) : res.status(503).json({ error: 'twitch_credentials_missing' }); });
   router.get('/auth/donationalerts', requireAdminSession, (req, res) => { const url = oauth.authorizationUrl('donationalerts'); return url ? res.redirect(url) : res.status(503).json({ error: 'donationalerts_credentials_missing' }); });
   for (const provider of ['twitch', 'donationalerts']) {
-    router.get(`/auth/${provider}/callback`, async (req, res) => { try { await oauth.callback(provider, req.query.code, req.query.state); res.redirect('/admin.html?oauth=connected'); } catch (error) { logger.warn('OAuth callback failed', { provider, reason: error.message }); res.status(400).json({ error: 'oauth_failed' }); } });
-    router.post(`/auth/${provider}/logout`, requireAdminSession, async (req, res) => { try { res.json(await oauth.logout(provider)); broadcast('integration:status', statuses.public(provider)); } catch (error) { logger.warn('Provider logout failed', { provider, reason: error.message }); safeError(res, error, 'logout_failed'); } });
+    router.get(`/auth/${provider}/callback`, async (req, res) => {
+      try {
+        await oauth.callback(provider, req.query.code, req.query.state);
+        if (provider === 'twitch') await twitchEventSub?.start();
+        broadcast('integration:status', statuses.public(provider));
+        res.redirect('/admin.html?oauth=connected');
+      } catch (error) {
+        logger.warn('OAuth callback failed', { provider, reason: error.message });
+        res.status(400).json({ error: 'oauth_failed' });
+      }
+    });
+    router.post(`/auth/${provider}/logout`, requireAdminSession, async (req, res) => {
+      try {
+        if (provider === 'twitch') await twitchEventSub?.stop({ updateStatus: false });
+        res.json(await oauth.logout(provider));
+        broadcast('integration:status', statuses.public(provider));
+      } catch (error) {
+        logger.warn('Provider logout failed', { provider, reason: error.message });
+        safeError(res, error, 'logout_failed');
+      }
+    });
   }
-  router.get('/twitch/rewards', requireAdminSession, (req, res) => res.json({ rewards: [], message: statuses.public('twitch').authStatus === 'Connected' ? 'Provider reward adapter not started' : 'Twitch is not connected' }));
+  router.get('/twitch/rewards', requireAdminSession, async (req, res) => {
+    const token = tokenStore.get('twitch');
+    if (statuses.public('twitch').authStatus !== 'Connected' || !token?.accessToken) {
+      return res.json({ connected: false, rewards: [], message: 'Connect a Twitch broadcaster account to load channel rewards.' });
+    }
+    try {
+      const rewards = await twitchApi.listChannelRewards();
+      return res.json({ connected: true, rewards });
+    } catch (error) {
+      const allowed = new Set(['twitch_not_connected', 'twitch_credentials_missing', 'twitch_account_unavailable', 'twitch_auth_failed', 'twitch_scope_missing', 'twitch_rate_limited', 'twitch_unavailable', 'twitch_invalid_response', 'twitch_user_unavailable', 'twitch_request_timeout', 'twitch_request_failed']);
+      const code = allowed.has(error?.message) ? error.message : 'twitch_request_failed';
+      logger.warn('Twitch reward catalog request failed', { reason: code });
+      if (code === 'twitch_auth_failed' || code === 'twitch_scope_missing') {
+        await twitchEventSub?.stop({ updateStatus: false });
+        const message = code === 'twitch_scope_missing'
+          ? 'Reconnect Twitch and grant permission to read channel point redemptions.'
+          : 'Twitch authorization expired. Reconnect Twitch to load channel rewards.';
+        const status = statuses.set('twitch', { authStatus: 'Failed', connectionStatus: 'Error', message });
+        broadcast('integration:status', status);
+      }
+      return res.status(code === 'twitch_not_connected' ? 401 : 502).json({ error: code });
+    }
+  });
 
   router.post('/dev/donation', requireAdminSession, (req, res) => {
     if (config.nodeEnv === 'production' || !donations) return res.status(404).json({ error: 'development_simulator_disabled' });

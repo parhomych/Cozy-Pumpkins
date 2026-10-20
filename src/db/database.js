@@ -68,7 +68,7 @@ export class Database {
   getPumpkin(id) { return rowToPumpkin(this.sqlite.prepare('SELECT * FROM pumpkins WHERE id = ?').get(id)); }
   findPumpkinByOwner(ownerKey) { return rowToPumpkin(this.sqlite.prepare('SELECT * FROM pumpkins WHERE owner_key = ?').get(ownerKey)); }
   findPumpkinByTwitch(userId, login) {
-    if (userId) { const row = this.sqlite.prepare('SELECT * FROM pumpkins WHERE twitch_user_id = ?').get(userId); if (row) return rowToPumpkin(row); }
+    if (userId) return rowToPumpkin(this.sqlite.prepare('SELECT * FROM pumpkins WHERE twitch_user_id = ?').get(userId));
     return login ? rowToPumpkin(this.sqlite.prepare('SELECT * FROM pumpkins WHERE twitch_username = ? COLLATE NOCASE').get(login)) : null;
   }
   insertPumpkin(pumpkin) {
