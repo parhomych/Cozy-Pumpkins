@@ -1,8 +1,18 @@
 import Centrifuge from 'centrifuge-legacy';
 
+const SAFE_DISCONNECT_REASONS = new Map([
+  ['connection closed', 'connection_closed'],
+  ['connect error', 'connect_error'],
+  ['bad request', 'bad_request'],
+  ['unauthorized', 'unauthorized'],
+]);
+
 function safeErrorCode(error, fallback) {
   const code = Number(error?.code ?? error?.error?.code);
   if (Number.isInteger(code)) return `centrifugo_error_${code}`;
+  const reason = String(error?.reason ?? error?.error?.message ?? error?.message ?? '').trim().toLowerCase();
+  const safeReason = SAFE_DISCONNECT_REASONS.get(reason);
+  if (safeReason) return `centrifugo_${safeReason}`;
   return fallback;
 }
 

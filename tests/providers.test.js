@@ -144,8 +144,7 @@ test('Centrifugo adapter refreshes tokens through SDK callbacks and reports isol
   const publications = [];
   const subscription = new EventEmitter();
   subscription.subscribe = () => {};
-  subscription.unsubscribe = () => {};
-  subscription.setToken = (token) => { subscription.token = token; };
+  subscription.unsubscribe = () => { subscription.unsubscribed = true; };
   const client = new EventEmitter();
   let subscriptionOptions;
   client.newSubscription = (channel, options) => {
@@ -156,6 +155,10 @@ test('Centrifugo adapter refreshes tokens through SDK callbacks and reports isol
   };
   client.connect = () => {};
   client.disconnect = () => { client.disconnected = true; };
+  client.removeSubscription = (removed) => {
+    assert.equal(removed, subscription);
+    subscription.unsubscribe();
+  };
   let clientOptions;
   const adapter = new CentrifugoEventClient({
     provider: 'memealerts',
@@ -185,7 +188,6 @@ test('Centrifugo adapter refreshes tokens through SDK callbacks and reports isol
   subscription.emit('subscribed');
   subscription.emit('publication', { data: { id: 'event-1' } });
   client.emit('disconnected', { code: 3003, reason: 'custom disconnect' });
-  assert.equal(subscription.token, '');
   client.emit('disconnected', { code: 3501, reason: 'bad request' });
   assert.deepEqual(statuses, ['Listening', 'Retrying', 'Error']);
   assert.deepEqual(statusMessages.slice(-2), [
@@ -197,6 +199,7 @@ test('Centrifugo adapter refreshes tokens through SDK callbacks and reports isol
   assert.equal(await reconnectChannelToken, 'private-channel-token-client-id-reconnected');
   assert.deepEqual(publications, [{ id: 'event-1' }]);
   adapter.stop();
+  assert.equal(subscription.unsubscribed, true);
   assert.equal(client.disconnected, true);
   assert.equal(statuses.at(-1), 'Disconnected');
 });
@@ -298,6 +301,17 @@ test('DonationAlerts legacy Centrifugo client uses assigned client IDs and refre
   assert.deepEqual(publications, [{ id: 'donation-1' }]);
   assert.deepEqual(statuses.map((status) => status.connectionStatus), ['Retrying', 'Listening']);
 
+  client.emit('disconnect', { reason: 'connection closed', reconnect: true });
+  assert.deepEqual(statuses.at(-1), {
+    connectionStatus: 'Retrying',
+    message: 'centrifugo_connection_closed',
+  });
+  client.emit('disconnect', { reason: 'authorization=private-token', reconnect: false });
+  assert.deepEqual(statuses.at(-1), {
+    connectionStatus: 'Error',
+    message: 'donationalerts_connection_failed',
+  });
+
   adapter.stop();
   assert.equal(client.disconnected, true);
   assert.equal(statuses.at(-1).connectionStatus, 'Disconnected');
@@ -348,18 +362,39 @@ test('DonationAlerts v2.2.1 wire protocol connects with legacy frames', async ()
   adapter.stop();
 });
 
-test('Meme Alerts adapter uses legacy Centrifugo frames with its assigned client ID', async () => {
-  ProtocolWebSocket.instances = [];
+test('Meme Alerts adapter uses the modern Centrifugo client for its private channel', async () => {
   let subscriptionRequest;
+  let clientOptions;
+  let subscriptionOptions;
+  let pendingChannelToken;
   let markListening;
   let timeout;
   const listening = new Promise((resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error('memealerts_legacy_subscription_timed_out')), 1000);
+    timeout = setTimeout(() => reject(new Error('memealerts_modern_subscription_timed_out')), 1000);
     markListening = () => {
       clearTimeout(timeout);
       resolve();
     };
   });
+  const subscription = new EventEmitter();
+  subscription.subscribe = () => {
+    pendingChannelToken = subscriptionOptions.getToken({ channel: '$alerts:donation_ma-user-7' });
+  };
+  subscription.unsubscribe = () => { subscription.unsubscribed = true; };
+  const client = new EventEmitter();
+  client.newSubscription = (channel, options) => {
+    assert.equal(channel, '$alerts:donation_ma-user-7');
+    subscriptionOptions = options;
+    return subscription;
+  };
+  client.connect = () => queueMicrotask(() => client.emit('connected', {
+    client: 'd558c046-c679-43e3-a62d-65989ab55f7c',
+  }));
+  client.disconnect = () => { client.disconnected = true; };
+  client.removeSubscription = (removed) => {
+    assert.equal(removed, subscription);
+    subscription.unsubscribe();
+  };
   const statuses = {
     set(provider, patch) {
       if (provider === 'memealerts' && patch.connectionStatus === 'Listening') markListening();
@@ -379,26 +414,29 @@ test('Meme Alerts adapter uses legacy Centrifugo frames with its assigned client
         data: { channels: [{ channel: '$alerts:donation_ma-user-7', token: 'private-channel-token' }] },
       }));
     },
-    websocket: ProtocolWebSocket,
+    eventClientFactory: (options) => new CentrifugoEventClient({
+      ...options,
+      clientFactory: (endpoint, config) => {
+        assert.equal(endpoint, 'wss://memealerts.com/connection/websocket');
+        clientOptions = config;
+        return client;
+      },
+    }),
     logger: { warn() {} },
   });
 
   await adapter.start();
+  assert.equal(await clientOptions.getToken(), 'private-socket-token');
+  assert.equal(await pendingChannelToken, 'private-channel-token');
+  subscription.emit('subscribed');
   await listening;
-  const commands = ProtocolWebSocket.instances[0].sent
-    .flatMap((message) => message.split('\n'))
-    .filter(Boolean)
-    .map((message) => JSON.parse(message));
-  assert.equal(commands[0].method, undefined);
-  assert.equal(commands[0].params.token, 'private-socket-token');
   assert.deepEqual(subscriptionRequest, {
     channels: ['$alerts:donation_ma-user-7'],
     client: 'd558c046-c679-43e3-a62d-65989ab55f7c',
   });
-  assert.equal(commands.some((command) => command.method === 1
-    && command.params.channel === '$alerts:donation_ma-user-7'
-    && command.params.token === 'private-channel-token'), true);
   await adapter.stop();
+  assert.equal(subscription.unsubscribed, true);
+  assert.equal(client.disconnected, true);
 });
 
 test('Meme Alerts adapter fetches a private channel token using refreshed credentials', async () => {
@@ -434,6 +472,194 @@ test('Meme Alerts adapter fetches a private channel token using refreshed creden
   assert.equal(JSON.parse(requests[0].options.body).client, clientId);
   assert.equal(requests[0].options.headers.Authorization, 'Bearer access-2');
   assert.equal(requests[0].url, 'https://memealerts.com/api/v1/centrifuge/subscribe');
+});
+
+test('Meme Alerts retries a timed-out profile lookup and exposes the safe failure reason', async () => {
+  let identityCalls = 0;
+  const statuses = [];
+  let markListening;
+  let timeout;
+  const listening = new Promise((resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error('memealerts_retry_timed_out')), 1000);
+    markListening = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+  });
+  const adapter = new MemeAlertsEvents({
+    oauth: {
+      getAccessToken: async () => 'private-access-token',
+      fetchIdentity: async () => {
+        identityCalls += 1;
+        if (identityCalls === 1) throw new Error('memealerts_profile_failed_timeout');
+        return { id: 'ma-user-7', socketConnectionToken: 'private-socket-token' };
+      },
+    },
+    tokenStore: { get: () => ({ accessToken: 'private-access-token', providerUserId: 'ma-user-7' }) },
+    onDonation() {},
+    statuses: { set: (provider, patch) => {
+      statuses.push({ provider, ...patch });
+      if (provider === 'memealerts' && patch.connectionStatus === 'Listening') markListening();
+    } },
+    eventClientFactory: (options) => ({
+      start() { options.onStatus({ connectionStatus: 'Listening', message: null }); },
+      stop() {},
+    }),
+    retryDelays: [0],
+    logger: { warn() {} },
+  });
+
+  await adapter.start();
+  assert.equal(statuses[0].connectionStatus, 'Retrying');
+  assert.equal(statuses[0].message, 'memealerts_profile_failed_timeout');
+  await listening;
+  assert.equal(identityCalls, 2);
+  assert.equal(statuses.at(-1).connectionStatus, 'Listening');
+  await adapter.stop();
+});
+
+test('Meme Alerts reports the actual safe profile error after retries are exhausted', async () => {
+  const statuses = [];
+  const adapter = new MemeAlertsEvents({
+    oauth: {
+      getAccessToken: async () => 'private-access-token',
+      fetchIdentity: async () => { throw new Error('memealerts_profile_failed_timeout'); },
+    },
+    tokenStore: { get: () => ({ accessToken: 'private-access-token', providerUserId: 'ma-user-7' }) },
+    onDonation() {},
+    statuses: { set: (provider, patch) => statuses.push({ provider, ...patch }) },
+    retryDelays: [],
+    logger: { warn() {} },
+  });
+
+  await assert.rejects(adapter.start(), /memealerts_profile_failed_timeout/u);
+  assert.deepEqual(statuses.at(-1), {
+    provider: 'memealerts',
+    connectionStatus: 'Error',
+    message: 'memealerts_profile_failed_timeout',
+  });
+});
+
+test('Meme Alerts does not retry permanent profile errors', async () => {
+  let identityCalls = 0;
+  const statuses = [];
+  const adapter = new MemeAlertsEvents({
+    oauth: {
+      getAccessToken: async () => 'private-access-token',
+      fetchIdentity: async () => {
+        identityCalls += 1;
+        throw new Error('memealerts_profile_failed');
+      },
+    },
+    tokenStore: { get: () => ({ accessToken: 'private-access-token', providerUserId: 'ma-user-7' }) },
+    onDonation() {},
+    statuses: { set: (provider, patch) => statuses.push({ provider, ...patch }) },
+    retryDelays: [0],
+    logger: { warn() {} },
+  });
+
+  await assert.rejects(adapter.start(), /memealerts_profile_failed/u);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(identityCalls, 1);
+  assert.equal(statuses.at(-1).connectionStatus, 'Error');
+});
+
+test('Meme Alerts stop cancels a scheduled profile retry', async () => {
+  let identityCalls = 0;
+  const adapter = new MemeAlertsEvents({
+    oauth: {
+      getAccessToken: async () => 'private-access-token',
+      fetchIdentity: async () => {
+        identityCalls += 1;
+        throw new Error('memealerts_profile_failed_timeout');
+      },
+    },
+    tokenStore: { get: () => ({ accessToken: 'private-access-token', providerUserId: 'ma-user-7' }) },
+    onDonation() {},
+    retryDelays: [20],
+    logger: { warn() {} },
+  });
+
+  await adapter.start();
+  await adapter.stop();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(identityCalls, 1);
+});
+
+test('Meme Alerts retries a terminal Centrifugo disconnect and ignores stale client status', async () => {
+  const statuses = [];
+  const clients = [];
+  let markListening;
+  let reconnectTimeout;
+  const listening = new Promise((resolve) => { markListening = resolve; });
+  const adapter = new MemeAlertsEvents({
+    oauth: {
+      getAccessToken: async () => 'private-access-token',
+      fetchIdentity: async () => ({ id: 'ma-user-7', socketConnectionToken: 'private-socket-token' }),
+    },
+    tokenStore: { get: () => ({ accessToken: 'private-access-token', providerUserId: 'ma-user-7' }) },
+    onDonation() {},
+    statuses: { set: (provider, patch) => {
+      statuses.push({ provider, ...patch });
+      if (patch.connectionStatus === 'Listening') markListening();
+    } },
+    eventClientFactory: (options) => {
+      const client = {
+        start() {
+          if (clients.length === 1) {
+            options.onStatus({ connectionStatus: 'Error', message: 'centrifugo_connection_closed' });
+          } else {
+            options.onStatus({ connectionStatus: 'Listening', message: null });
+          }
+        },
+        stop() { options.onStatus({ connectionStatus: 'Disconnected', message: null }); },
+      };
+      clients.push(client);
+      return client;
+    },
+    retryDelays: [0],
+    logger: { warn() {} },
+  });
+
+  await adapter.start();
+  await Promise.race([
+    listening,
+    new Promise((_, reject) => {
+      reconnectTimeout = setTimeout(() => reject(new Error('memealerts_reconnect_timed_out')), 1000);
+    }),
+  ]);
+  clearTimeout(reconnectTimeout);
+  assert.equal(clients.length, 2);
+  assert.equal(statuses.some((status) => status.connectionStatus === 'Retrying'
+    && status.message === 'centrifugo_connection_closed'), true);
+  assert.equal(statuses.some((status) => status.connectionStatus === 'Disconnected'), false);
+  await adapter.stop();
+});
+
+test('Meme Alerts stop cancels a scheduled terminal-disconnect retry', async () => {
+  let clientStarts = 0;
+  const adapter = new MemeAlertsEvents({
+    oauth: {
+      getAccessToken: async () => 'private-access-token',
+      fetchIdentity: async () => ({ id: 'ma-user-7', socketConnectionToken: 'private-socket-token' }),
+    },
+    tokenStore: { get: () => ({ accessToken: 'private-access-token', providerUserId: 'ma-user-7' }) },
+    onDonation() {},
+    eventClientFactory: (options) => ({
+      start() {
+        clientStarts += 1;
+        options.onStatus({ connectionStatus: 'Error', message: 'centrifugo_connection_closed' });
+      },
+      stop() {},
+    }),
+    retryDelays: [20],
+    logger: { warn() {} },
+  });
+
+  await adapter.start();
+  await adapter.stop();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(clientStarts, 1);
 });
 
 test('DonatEx SignalR adapter reconnects and suppresses same-ID rerun events', async () => {

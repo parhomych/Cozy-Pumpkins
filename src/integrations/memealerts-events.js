@@ -1,12 +1,14 @@
-import { LegacyCentrifugoEventClient } from './legacy-centrifugo-client.js';
+import { CentrifugoEventClient } from './centrifugo-client.js';
 
 const API = 'https://memealerts.com/api/v1';
 const ENDPOINT = 'wss://memealerts.com/connection/websocket';
 const CLIENT_ID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
+const START_RETRY_DELAYS = [2000, 5000, 15000];
 
 function safeApiError(error, fallback) {
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return `${fallback}_timeout`;
-  return fallback;
+  const reason = String(error?.message ?? '');
+  return /^memealerts_[a-z0-9_]+$/u.test(reason) ? reason : fallback;
 }
 
 export function normalizeMemeAlertsEvent(input) {
@@ -37,12 +39,21 @@ export class MemeAlertsEvents {
     onDonation,
     statuses,
     fetchImpl = globalThis.fetch,
-    eventClientFactory = (options) => new LegacyCentrifugoEventClient(options),
+    eventClientFactory = (options) => new CentrifugoEventClient(options),
     websocket = globalThis.WebSocket,
     logger = console,
+    retryDelays = START_RETRY_DELAYS,
   } = {}) {
-    Object.assign(this, { oauth, tokenStore, onDonation, statuses, fetch: fetchImpl, eventClientFactory, websocket, logger });
+    Object.assign(this, {
+      oauth, tokenStore, onDonation, statuses, fetch: fetchImpl,
+      eventClientFactory, websocket, logger, retryDelays,
+    });
     this.client = null;
+    this.startPromise = null;
+    this.retryTimer = null;
+    this.retryAttempt = 0;
+    this.clientGeneration = 0;
+    this.stopped = false;
   }
 
   async requestSubscriptionToken(channel, clientId) {
@@ -70,14 +81,53 @@ export class MemeAlertsEvents {
 
   async start() {
     if (this.client) return;
+    if (this.startPromise) return this.startPromise;
+    this.stopped = false;
+    this.startPromise = this.startConnection();
+    try {
+      await this.startPromise;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  async startConnection() {
     const token = this.tokenStore.get('memealerts');
     if (!token?.accessToken) throw new Error('memealerts_not_connected');
-    const profile = await this.oauth.fetchIdentity('memealerts', await this.oauth.getAccessToken('memealerts'));
+    let profile;
+    try {
+      profile = await this.oauth.fetchIdentity('memealerts', await this.oauth.getAccessToken('memealerts'));
+    } catch (error) {
+      const reason = safeApiError(error, 'memealerts_profile_failed');
+      const retryable = /_(?:timeout|unavailable)$/u.test(reason);
+      const delay = retryable ? this.retryDelays[this.retryAttempt++] : undefined;
+      if (!this.stopped && delay !== undefined) {
+        this.statuses?.set('memealerts', { connectionStatus: 'Retrying', message: reason });
+        this.logger.warn('Meme Alerts profile lookup failed; retry scheduled.', {
+          provider: 'memealerts',
+          reason,
+        });
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          this.start().catch((retryError) => {
+            this.logger.warn('Meme Alerts connection retry failed.', {
+              provider: 'memealerts',
+              reason: safeApiError(retryError, 'memealerts_connection_failed'),
+            });
+          });
+        }, delay);
+        return;
+      }
+      this.statuses?.set('memealerts', { connectionStatus: 'Error', message: reason });
+      throw error;
+    }
+    if (this.stopped) return;
     if (!profile?.id) throw new Error('memealerts_account_unavailable');
     if (token.providerUserId && String(token.providerUserId) !== String(profile.id)) throw new Error('memealerts_account_changed');
     if (typeof profile.socketConnectionToken !== 'string' || !profile.socketConnectionToken) throw new Error('memealerts_socket_token_unavailable');
     if (!token.providerUserId) this.tokenStore.save('memealerts', { ...token, providerUserId: String(profile.id) });
     const channel = `$alerts:donation_${profile.id}`;
+    const generation = ++this.clientGeneration;
     let socketToken = profile.socketConnectionToken;
     const getConnectionToken = async () => {
       if (socketToken) {
@@ -100,7 +150,12 @@ export class MemeAlertsEvents {
         if (event) this.onDonation(event);
         else this.logger.warn('Meme Alerts donation event was rejected', { provider: 'memealerts', reason: 'invalid_event' });
       },
-      onStatus: (patch) => this.statuses?.set('memealerts', patch),
+      onStatus: (patch) => {
+        if (this.stopped || generation !== this.clientGeneration) return;
+        if (patch.connectionStatus === 'Listening') this.retryAttempt = 0;
+        this.statuses?.set('memealerts', patch);
+        if (patch.connectionStatus === 'Error') this.scheduleConnectionRetry(patch.message);
+      },
       websocket: this.websocket,
       logger: this.logger,
     });
@@ -108,13 +163,47 @@ export class MemeAlertsEvents {
     try {
       await client.start();
     } catch (error) {
-      this.client = null;
-      this.statuses?.set('memealerts', { connectionStatus: 'Error', message: safeApiError(error, 'memealerts_connection_failed') });
+      const reason = safeApiError(error, 'memealerts_connection_failed');
+      this.scheduleConnectionRetry(reason);
       throw error;
     }
   }
 
+  scheduleConnectionRetry(reason) {
+    if (this.stopped || this.retryTimer) return;
+    const delay = this.retryDelays[this.retryAttempt++];
+    const client = this.client;
+    this.client = null;
+    this.clientGeneration += 1;
+    client?.stop();
+    if (delay === undefined) {
+      this.statuses?.set('memealerts', { connectionStatus: 'Error', message: reason });
+      return;
+    }
+    const safeReason = /^[a-z0-9_]+$/iu.test(String(reason ?? ''))
+      ? String(reason)
+      : 'memealerts_connection_failed';
+    this.statuses?.set('memealerts', { connectionStatus: 'Retrying', message: safeReason });
+    this.logger.warn('Meme Alerts connection failed; retry scheduled.', {
+      provider: 'memealerts',
+      reason: safeReason,
+    });
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.start().catch((retryError) => {
+        this.logger.warn('Meme Alerts connection retry failed.', {
+          provider: 'memealerts',
+          reason: safeApiError(retryError, 'memealerts_connection_failed'),
+        });
+      });
+    }, delay);
+  }
+
   async stop() {
+    this.stopped = true;
+    this.clientGeneration += 1;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     const client = this.client;
     this.client = null;
     client?.stop();

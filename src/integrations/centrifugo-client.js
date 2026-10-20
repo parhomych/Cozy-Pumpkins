@@ -79,7 +79,6 @@ export class CentrifugoEventClient {
     client.on('disconnected', (context = {}) => {
       connectedClientId = null;
       clientGeneration += 1;
-      subscription?.setToken('');
       this.onStatus(disconnectStatus(context));
     });
     client.on('error', (context = {}) => {
@@ -125,8 +124,7 @@ export class CentrifugoEventClient {
     this.stopped = true;
     for (const waiter of this.clientIdWaiters || []) waiter.reject(new Error('centrifugo_client_stopped'));
     this.clientIdWaiters?.clear();
-    this.subscription?.setToken('');
-    this.subscription?.unsubscribe();
+    client.removeSubscription(this.subscription);
     this.subscription = null;
     client.disconnect();
     this.onStatus({ connectionStatus: 'Disconnected', message: null });

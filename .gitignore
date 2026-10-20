@@ -8,4 +8,5 @@ npm-debug.log*
 coverage/
 .specify/
 .github/skills
-.playwright/
+.playwright-mcp/
+specs/
