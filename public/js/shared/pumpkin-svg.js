@@ -51,7 +51,7 @@ function appendReferencePaths(markup, layers) {
   if (paths.length < 9) return false;
 
   layers.fallback.remove();
-  const buckets = [layers.body, layers.body, layers.body, layers.leaves, layers.leaves, layers.stem, layers.leavesFront, layers.leavesFront, layers.highlights];
+  const buckets = [layers.body, layers.body, layers.body, layers.bodyAccent, layers.leaves, layers.stem, layers.leavesFront, layers.leavesFront, layers.highlights];
   paths.forEach((source, index) => {
     const clone = document.importNode ? document.importNode(source, true) : source.cloneNode(true);
     clone.classList.add('reference-layer', `reference-layer-${index + 1}`);
@@ -160,11 +160,15 @@ export function createPumpkinSvg(pumpkin = {}) {
   const mover = group('mover');
   const floater = group('floater');
   const actor = group('actor');
+  const leafBed = group('leaf-bed-static');
+  const bodyMotion = group('body-motion idle-body-motion');
+  const bodyLook = group('body-look');
   const rocker = group('rocker idle-rocker');
   const shadow = node('ellipse', { class: 'ground-shadow', cx: '548', cy: '1062', rx: '315', ry: '38', fill: '#24152d', opacity: '.28' });
   const layers = {
     fallback: referenceFallback(),
     body: group(`body pumpkin-body skin-${customization.skin}`),
+    bodyAccent: group('body-accent'),
     leaves: group('leaves leaf-bed'),
     leavesFront: group('leaves leaves-front leaf-bed'),
     stem: group('stem'),
@@ -173,7 +177,11 @@ export function createPumpkinSvg(pumpkin = {}) {
   layers.body.append(layers.fallback);
   const faceMask = group('face-mask face-mask-reference');
   addFaceMask(faceMask);
-  rocker.append(layers.body, layers.leaves, layers.stem, layers.leavesFront, layers.highlights, faceMask);
+  // The leaves form a stationary support under the pumpkin. Keep both
+  // reference leaf layers outside the animated body stack so idle motion
+  // cannot make the pumpkin slide away from its base.
+  leafBed.append(layers.leaves, layers.leavesFront);
+  rocker.append(layers.body, layers.bodyAccent, layers.stem, layers.highlights, faceMask);
   hydrateReferencePaths(layers);
 
   const face = group(`face face-${customization.mouth}`);
@@ -195,10 +203,14 @@ export function createPumpkinSvg(pumpkin = {}) {
   rocker.append(face, hat, accessory);
   const airPlanter = group('air-planter');
   airPlanter.append(node('ellipse', { cx: '548', cy: '1035', rx: '235', ry: '35', fill: '#8d5a3a', opacity: '.38' }));
-  actor.append(rocker);
+  bodyLook.append(rocker);
+  bodyMotion.append(bodyLook);
+  actor.append(bodyMotion);
   const stageScale = [0.58, 0.82, 1, 1.12][stage - 1];
-  actor.setAttribute('transform', `translate(${548 * (1 - stageScale)} ${548 * (1 - stageScale)}) scale(${stageScale})`);
-  floater.append(actor); mover.append(shadow, airPlanter, floater); root.append(mover);
+  const stageTransform = `translate(${548 * (1 - stageScale)} ${548 * (1 - stageScale)}) scale(${stageScale})`;
+  leafBed.setAttribute('transform', stageTransform);
+  actor.setAttribute('transform', stageTransform);
+  floater.append(leafBed, actor); mover.append(shadow, airPlanter, floater); root.append(mover);
   return root;
 }
 

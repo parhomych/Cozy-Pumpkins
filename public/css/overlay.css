@@ -4,7 +4,7 @@ body { font-family: system-ui, sans-serif; }
 .pumpkin-layer { position: absolute; inset: 0; width: 100%; height: 100%; }
 .pumpkin-character { position: absolute; left: 0; top: 0; width: 11.458333%; height: auto; aspect-ratio: 1; overflow: visible; transform-origin: center bottom; pointer-events: none; }
 .pumpkin-character { will-change: transform; }
-.pumpkin-character .mover, .pumpkin-character .floater, .pumpkin-character .actor, .pumpkin-character .rocker, .pumpkin-character .stem, .pumpkin-character .body, .pumpkin-character .face, .pumpkin-character .eyes, .pumpkin-character .mouth { transform-box: fill-box; transform-origin: center bottom; }
+.pumpkin-character .mover, .pumpkin-character .floater, .pumpkin-character .actor, .pumpkin-character .leaf-bed-static, .pumpkin-character .body-motion, .pumpkin-character .body-look, .pumpkin-character .rocker, .pumpkin-character .stem, .pumpkin-character .body, .pumpkin-character .face, .pumpkin-character .eyes, .pumpkin-character .mouth { transform-box: fill-box; transform-origin: center bottom; }
 .pumpkin-character.is-airborne .ground-shadow { opacity: .18; transform: scaleX(.66); transform-origin: center; }
 .pumpkin-character.is-flying .ground-shadow { opacity: .1; }
 .connection-pill { position: fixed; top: 18px; right: 18px; padding: 8px 12px; border: 1px solid rgba(255,255,255,.25); border-radius: 999px; color: #fff; background: rgba(32, 18, 42, .72); font-size: 12px; letter-spacing: .04em; opacity: 0; transition: opacity .2s ease; }

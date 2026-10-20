@@ -7,6 +7,8 @@ import { publicPumpkin } from '../engine/donations.js';
 import { normalizeName, normalizeText, finiteNumber } from '../utils/normalize.js';
 import { normalizeZone, isPositionValid, clampPosition, validateParentLink, relocateInvalidPumpkins } from '../engine/spatial-rules.js';
 import { sanitizeCustomization } from '../engine/customization-parser.js';
+import { animationPatch } from '../engine/animation.js';
+import { rewardMappingPatch } from '../engine/rewards.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 function safeError(res, error, fallback = 'request_failed') { const code = error?.message && /^[a-z0-9_]+$/i.test(error.message) ? error.message : fallback; return res.status(code.includes('required') ? 401 : 400).json({ error: code }); }
@@ -16,7 +18,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
   router.get('/status', (req, res) => res.json({ ok: true, config: publicConfig(config), integrations: statusesPayload(statuses), devSimulator: config.nodeEnv !== 'production', serverTime: new Date().toISOString() }));
   router.get('/pumpkins', (req, res) => res.json({ pumpkins: db.listPumpkins().map(publicPumpkin) }));
   router.get('/pumpkins/:id', (req, res) => { const pumpkin = db.getPumpkin(req.params.id); return pumpkin ? res.json({ pumpkin: publicPumpkin(pumpkin) }) : res.status(404).json({ error: 'pumpkin_not_found' }); });
-  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping } }); });
+  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation } }); });
 
   router.get('/auth/twitch', requireAdminSession, (req, res) => { const url = oauth.authorizationUrl('twitch'); return url ? res.redirect(url) : res.status(503).json({ error: 'twitch_credentials_missing' }); });
   router.get('/auth/donationalerts', requireAdminSession, (req, res) => { const url = oauth.authorizationUrl('donationalerts'); return url ? res.redirect(url) : res.status(503).json({ error: 'donationalerts_credentials_missing' }); });
@@ -57,7 +59,9 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
       const body = req.body || {}; const current = db.getSettings(config); const patch = {};
       if (body.noGoZone !== undefined) patch.noGoZone = normalizeZone(body.noGoZone, config.scene);
       if (body.groundY !== undefined) { const groundY = finiteNumber(body.groundY, { min: 0, max: config.scene.height }); if (groundY === null) throw new Error('invalid_ground_y'); patch.groundY = groundY; }
-      if (body.rewardMapping !== undefined) { if (!body.rewardMapping || typeof body.rewardMapping !== 'object' || Array.isArray(body.rewardMapping)) throw new Error('invalid_reward_mapping'); patch.rewardMapping = Object.fromEntries(Object.entries(body.rewardMapping).filter(([key, value]) => ['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost'].includes(key) && typeof value === 'string').map(([key, value]) => [key, normalizeText(value, 128)])); }
+      if (body.rewardMapping !== undefined) { const rewardMapping = rewardMappingPatch(body.rewardMapping, current.rewardMapping); if (!rewardMapping) throw new Error('invalid_reward_mapping'); patch.rewardMapping = rewardMapping; }
+      const animationInput = body.animation !== undefined ? body.animation : (body.eyeFrequency !== undefined || body.mouthFrequency !== undefined ? { eyeFrequency: body.eyeFrequency, mouthFrequency: body.mouthFrequency } : undefined);
+      if (animationInput !== undefined) { const animation = animationPatch(animationInput, current.animation); if (!animation) throw new Error('invalid_animation'); patch.animation = animation; }
       const relocated = [];
       const settings = db.transaction(() => {
         const value = db.updateSettings(patch, config);
@@ -70,6 +74,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
         return value;
       });
       for (const pumpkin of relocated) broadcast('pumpkin:updated', { pumpkin });
+      broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation } });
       broadcast('settings:nogo-updated', { noGoZone: settings.noGoZone }); return res.json({ settings });
     } catch (error) { return safeError(res, error); }
   });

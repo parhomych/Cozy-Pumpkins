@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import BetterSqlite3 from 'better-sqlite3';
+import { DEFAULT_ANIMATION, sanitizeAnimation } from '../engine/animation.js';
 
 const schemaPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql');
 const DEFAULT_ZONE = { enabled: false, x: 0, y: 0, width: 0, height: 0 };
@@ -26,6 +27,23 @@ export class Database {
     this.sqlite = new sqlite(databasePath);
     this.sqlite.pragma('foreign_keys = ON');
     this.sqlite.exec(fs.readFileSync(schemaPath, 'utf8'));
+    this.legacyAnimation = DEFAULT_ANIMATION;
+    this.migrateSchema();
+  }
+  migrateSchema() {
+    const settingsColumns = new Set(this.sqlite.prepare('PRAGMA table_info(settings)').all().map((column) => column.name));
+    const addedSettingsAnimation = !settingsColumns.has('animation_json');
+    if (addedSettingsAnimation) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN animation_json TEXT NOT NULL DEFAULT '{"eyeFrequency":1,"mouthFrequency":1}'`);
+
+    // Older uncommitted builds stored animation on each pumpkin. Preserve the
+    // first valid value as the initial scene setting, then remove that column.
+    const pumpkinColumns = new Set(this.sqlite.prepare('PRAGMA table_info(pumpkins)').all().map((column) => column.name));
+    if (pumpkinColumns.has('animation_json')) {
+      const legacy = this.sqlite.prepare('SELECT animation_json FROM pumpkins WHERE animation_json IS NOT NULL ORDER BY created_at, id LIMIT 1').get();
+      if (legacy?.animation_json) this.legacyAnimation = sanitizeAnimation(parsed(legacy.animation_json, DEFAULT_ANIMATION));
+      if (addedSettingsAnimation) this.sqlite.prepare('UPDATE settings SET animation_json = ? WHERE id = 1').run(JSON.stringify(this.legacyAnimation));
+      this.sqlite.exec('ALTER TABLE pumpkins DROP COLUMN animation_json');
+    }
   }
   close() { this.sqlite.close(); }
   transaction(fn) { return this.sqlite.transaction(fn)(); }
@@ -33,15 +51,16 @@ export class Database {
   getSettings(defaults = { scene: { groundY: 980 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} } }) {
     const row = this.sqlite.prepare('SELECT * FROM settings WHERE id = 1').get();
     if (!row) {
-      const value = { groundY: defaults.scene.groundY, noGoZone: { ...DEFAULT_ZONE }, pumpkinCurrency: defaults.pumpkinCurrency, rewardMapping: { ...defaults.twitch.rewardIds } };
-      this.sqlite.prepare(`INSERT INTO settings (id, ground_y, no_go_zone_json, pumpkin_currency, reward_mapping_json, updated_at) VALUES (1, ?, ?, ?, ?, ?)`).run(value.groundY, JSON.stringify(value.noGoZone), value.pumpkinCurrency, JSON.stringify(value.rewardMapping), new Date().toISOString());
+      const value = { groundY: defaults.scene.groundY, noGoZone: { ...DEFAULT_ZONE }, pumpkinCurrency: defaults.pumpkinCurrency, rewardMapping: { ...defaults.twitch.rewardIds }, animation: sanitizeAnimation(this.legacyAnimation, defaults.animation || DEFAULT_ANIMATION) };
+      this.sqlite.prepare(`INSERT INTO settings (id, ground_y, no_go_zone_json, pumpkin_currency, reward_mapping_json, animation_json, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?)`).run(value.groundY, JSON.stringify(value.noGoZone), value.pumpkinCurrency, JSON.stringify(value.rewardMapping), JSON.stringify(value.animation), new Date().toISOString());
       return value;
     }
-    return { groundY: row.ground_y, noGoZone: parsed(row.no_go_zone_json, DEFAULT_ZONE), pumpkinCurrency: row.pumpkin_currency, rewardMapping: parsed(row.reward_mapping_json, {}), updatedAt: row.updated_at };
+    return { groundY: row.ground_y, noGoZone: parsed(row.no_go_zone_json, DEFAULT_ZONE), pumpkinCurrency: row.pumpkin_currency, rewardMapping: parsed(row.reward_mapping_json, {}), animation: sanitizeAnimation(parsed(row.animation_json, DEFAULT_ANIMATION), defaults.animation || DEFAULT_ANIMATION), updatedAt: row.updated_at };
   }
   updateSettings(patch, defaults = { scene: { groundY: 980 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} } }) {
     const current = this.getSettings(defaults); const next = { ...current, ...patch };
-    this.sqlite.prepare('UPDATE settings SET ground_y = ?, no_go_zone_json = ?, pumpkin_currency = ?, reward_mapping_json = ?, updated_at = ? WHERE id = 1').run(next.groundY, JSON.stringify(next.noGoZone), next.pumpkinCurrency, JSON.stringify(next.rewardMapping), new Date().toISOString());
+    next.animation = sanitizeAnimation(next.animation, defaults.animation || DEFAULT_ANIMATION);
+    this.sqlite.prepare('UPDATE settings SET ground_y = ?, no_go_zone_json = ?, pumpkin_currency = ?, reward_mapping_json = ?, animation_json = ?, updated_at = ? WHERE id = 1').run(next.groundY, JSON.stringify(next.noGoZone), next.pumpkinCurrency, JSON.stringify(next.rewardMapping), JSON.stringify(next.animation), new Date().toISOString());
     return this.getSettings(defaults);
   }
 

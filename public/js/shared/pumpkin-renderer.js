@@ -1,14 +1,14 @@
 import { PumpkinCharacter } from './pumpkin-character.js';
 
 export class PumpkinRenderer {
-  constructor(container, { interactive = false, onSelect = null } = {}) {
-    this.container = container; this.interactive = interactive; this.onSelect = onSelect; this.characters = new Map(); this.sequence = new Map();
+  constructor(container, { interactive = false, onSelect = null, settings = null } = {}) {
+    this.container = container; this.interactive = interactive; this.onSelect = onSelect; this.settings = settings || {}; this.characters = new Map(); this.sequence = new Map();
     this.container?.classList.add('pumpkin-layer');
   }
   add(pumpkin, { immediate = true } = {}) {
     if (!pumpkin?.id) return null;
     if (this.characters.has(pumpkin.id)) return this.update(pumpkin, { immediate });
-    const character = new PumpkinCharacter(pumpkin, { positioning: 'scene', interactive: this.interactive, onPointerDown: (data, event) => this.onSelect?.(data.id, data, event) });
+    const character = new PumpkinCharacter(pumpkin, { positioning: 'scene', interactive: this.interactive, animationSettings: this.settings.animation, onPointerDown: (data, event) => this.onSelect?.(data.id, data, event) });
     this.characters.set(pumpkin.id, character); this.sequence.set(pumpkin.id, -1); this.container?.append(character.root); character.startIdle(); return character;
   }
   update(pumpkin, { immediate = false } = {}) {
@@ -16,6 +16,11 @@ export class PumpkinRenderer {
     character.data = { ...character.data, ...pumpkin, customization: pumpkin.customization || character.data.customization };
     if (pumpkin.customization) character.applyCustomization(pumpkin.customization);
     character.moveTo(pumpkin.x, pumpkin.y, { immediate, isAirborne: pumpkin.isAirborne }); return character;
+  }
+  setSettings(settings = {}) {
+    this.settings = { ...this.settings, ...settings, animation: { ...(this.settings.animation || {}), ...(settings.animation || {}) } };
+    for (const character of this.characters.values()) { character.setAnimationSettings(this.settings.animation); character.restartIdle(); }
+    return this;
   }
   setPosition(id, x, y, { immediate = false, isAirborne } = {}) { const character = this.characters.get(id); if (!character) return; character.moveTo(x, y, { immediate, isAirborne }); }
   applyMove(payload, { immediate = false } = {}) { if (!payload?.id) return; const next = Number(payload.sequence); const previous = this.sequence.get(payload.id) ?? -1; if (Number.isFinite(next) && next < previous) return; if (Number.isFinite(next)) this.sequence.set(payload.id, next); this.setPosition(payload.id, payload.x, payload.y, { immediate, isAirborne: payload.isAirborne }); }

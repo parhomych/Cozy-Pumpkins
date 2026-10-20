@@ -2,6 +2,28 @@ import { normalizeName, normalizeText, safeId } from '../utils/normalize.js';
 import { dimensionsFor, isPositionValid, clampPosition, validateParentLink } from './spatial-rules.js';
 import { publicPumpkin } from './donations.js';
 
+export const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost']);
+
+// Returns a complete, safe mapping patch. Unknown action keys are ignored for
+// forwards compatibility; empty IDs remain valid to preserve disabled mappings.
+export function sanitizeRewardMapping(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const result = {};
+  for (const action of REWARD_ACTIONS) {
+    if (!(action in value)) continue;
+    if (typeof value[action] !== 'string') return null;
+    const rewardId = normalizeText(value[action], 128);
+    result[action] = rewardId;
+  }
+  return result;
+}
+
+export function rewardMappingPatch(value, current = {}) {
+  const sanitized = sanitizeRewardMapping(value);
+  if (!sanitized) return null;
+  return { ...current, ...sanitized };
+}
+
 function parseRedemption(raw) {
   const redemptionId = safeId(raw?.id ?? raw?.redemption_id ?? raw?.redemption?.id); const reward = raw?.reward || {};
   const rewardId = safeId(raw?.rewardId ?? raw?.reward_id ?? reward.id); const user = raw?.user || raw?.redeemer || {};

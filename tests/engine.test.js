@@ -5,11 +5,25 @@ import { RewardService } from '../src/engine/rewards.js';
 import { parseCustomization } from '../src/engine/customization-parser.js';
 import { clampPosition, dimensionsFor, isPositionValid } from '../src/engine/spatial-rules.js';
 import { testConfig, testDatabase } from './helpers.js';
+import { DEFAULT_ANIMATION, ANIMATION_LIMITS, animationPatch, sanitizeAnimation } from '../src/engine/animation.js';
+import { attachSocketHandlers } from '../src/socket/handlers.js';
+import { OAuthAdapters } from '../src/auth/oauth-adapters.js';
+import { rewardMappingPatch, sanitizeRewardMapping } from '../src/engine/rewards.js';
 
 test('customization parser accepts the documented command and ignores unknown words', () => {
   const parsed = parseCustomization('  !ТЫКОВКА ведьма рожки хитрые клыки метла неизвестно');
   assert.equal(parsed.commandDetected, true);
   assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'sly', mouth: 'fangs', hat: 'horns', prop: 'broom' });
+});
+
+test('OAuth authorization URLs use the server API callback routes', () => {
+  const config = testConfig({ TWITCH_CLIENT_ID: 'twitch-client', DA_CLIENT_ID: 'donationalerts-client' });
+  const oauth = new OAuthAdapters({ config, tokenStore: {}, statuses: {} });
+  for (const provider of ['twitch', 'donationalerts']) {
+    const url = new URL(oauth.authorizationUrl(provider));
+    assert.equal(url.searchParams.get('redirect_uri'), config[provider].redirectUri);
+    assert.equal(new URL(config[provider].redirectUri).pathname, `/api/auth/${provider}/callback`);
+  }
 });
 
 test('donation processing creates, evolves, and deduplicates a pumpkin', () => {
@@ -19,6 +33,7 @@ test('donation processing creates, evolves, and deduplicates a pumpkin', () => {
   const service = new DonationService({ db, config, emit: (event, payload) => events.push([event, payload]), idFactory: () => 'pumpkin-1' });
   const first = service.handle({ id: 'donation-1', name: 'Spooky Viewer', amount: 300, currency: 'RUB', message: '!тыковка ведьма рожки хитрые клыки метла' });
   assert.equal(first.spawned, true);
+  assert.equal('animation' in first.pumpkin, false);
   assert.equal(first.pumpkin.stage, 2);
   assert.equal(first.pumpkin.customization.skin, 'witch');
   assert.equal(service.handle({ id: 'donation-1', name: 'Spooky Viewer', amount: 300, currency: 'RUB' }).duplicate, true);
@@ -26,6 +41,48 @@ test('donation processing creates, evolves, and deduplicates a pumpkin', () => {
   assert.equal(second.pumpkin.stage, 3);
   assert.equal(db.listPumpkins().length, 1);
   assert.deepEqual(events.map(([event]) => event), ['pumpkin:spawned', 'pumpkin:evolved', 'pumpkin:updated', 'pumpkin:evolved']);
+  db.close();
+});
+
+test('animation settings sanitize partial updates and reject non-finite or out-of-range values', () => {
+  assert.deepEqual(sanitizeAnimation({ eyeFrequency: '2.5', mouthFrequency: Infinity }), { eyeFrequency: 2.5, mouthFrequency: 1 });
+  assert.deepEqual(animationPatch({ eyeFrequency: 0.1 }, { eyeFrequency: 2, mouthFrequency: 3 }), { eyeFrequency: ANIMATION_LIMITS.min, mouthFrequency: 3 });
+  assert.equal(animationPatch({ mouthFrequency: 10.01 }), null);
+  assert.equal(animationPatch({ eyeFrequency: 'not-a-number' }), null);
+  assert.equal(animationPatch({}), null);
+});
+
+test('reward mapping sanitizer accepts supported actions and merges partial updates', () => {
+  assert.deepEqual(sanitizeRewardMapping({ inflate: ' reward-1 ', ghost: 'reward-2', unknown: 'ignored' }), { inflate: 'reward-1', ghost: 'reward-2' });
+  assert.deepEqual(rewardMappingPatch({ bat: 'reward-3' }, { inflate: 'reward-1' }), { inflate: 'reward-1', bat: 'reward-3' });
+  assert.equal(rewardMappingPatch({ jump_on: 42 }, {}), null);
+  assert.deepEqual(rewardMappingPatch({ morph_fly: '' }, {}), { morph_fly: '' });
+});
+
+test('animation settings persist globally and are broadcast through Socket.IO settings updates', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  assert.deepEqual(db.getSettings(config).animation, DEFAULT_ANIMATION);
+  db.updateSettings({ animation: { eyeFrequency: 2, mouthFrequency: 3 } }, config);
+  assert.deepEqual(db.getSettings(config).animation, { eyeFrequency: 2, mouthFrequency: 3 });
+  const ioEvents = [];
+  const socketEvents = new Map();
+  let connection;
+  const io = { use() {}, on(event, handler) { if (event === 'connection') connection = handler; }, emit(...args) { ioEvents.push(args); } };
+  attachSocketHandlers(io, { config, db, statuses: { all: () => [] } });
+  const socket = { data: { admin: true }, handshake: { headers: {} }, on(event, handler) { socketEvents.set(event, handler); }, emit(...args) { ioEvents.push(['socket', ...args]); } };
+  connection(socket);
+  socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 2.5 } });
+  assert.equal(ioEvents.at(-1)[0], 'settings:updated');
+  assert.deepEqual(ioEvents.at(-1)[1].settings.animation, { eyeFrequency: 2.5, mouthFrequency: 3 });
+  socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 0 } });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_animation' }]);
+  socketEvents.get('admin:settings:update')({ rewardMapping: { inflate: 'reward-inflate' } });
+  assert.equal(ioEvents.at(-1)[0], 'settings:updated');
+  assert.equal(ioEvents.at(-1)[1].settings.rewardMapping.inflate, 'reward-inflate');
+  assert.equal(db.getSettings(config).rewardMapping.inflate, 'reward-inflate');
+  socketEvents.get('admin:settings:update')({ rewardMapping: { ghost: 7 } });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_reward_mapping' }]);
   db.close();
 });
 

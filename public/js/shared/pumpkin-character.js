@@ -5,13 +5,18 @@ const wait = (fn, ms) => setTimeout(fn, ms);
 const randomBetween = (min, max) => min + Math.random() * (max - min);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const REFERENCE_FACE_ORIGIN = '548 665';
+const REFERENCE_BODY_ORIGIN = '548 1035';
 const BLINK_DELAY_MIN = 9000;
 const BLINK_DELAY_MAX = 18000;
+const ANIMATION_FREQUENCY_MIN = 0.1;
+const ANIMATION_FREQUENCY_MAX = 10;
+const DEFAULT_ANIMATION = Object.freeze({ eyeFrequency: 1, mouthFrequency: 1 });
 
-/** One independently animated pumpkin. Positioning lives on .mover; idle lives on .floater. */
+/** One independently animated pumpkin. Positioning lives on .mover; idle body motion is below the inert .floater wrapper. */
 export class PumpkinCharacter {
-  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene' } = {}) {
+  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene', animationSettings = null } = {}) {
     this.positioning = positioning;
+    this.animationSettings = { ...DEFAULT_ANIMATION, ...(animationSettings || {}) };
     this.data = { ...pumpkin, customization: normalizeCustomization(pumpkin.customization) };
     this.root = createPumpkinSvg(this.data);
     this.root.classList.toggle('is-interactive', interactive);
@@ -37,6 +42,9 @@ export class PumpkinCharacter {
     this.mover = this.root.querySelector('.mover');
     this.floater = this.root.querySelector('.floater');
     this.actor = this.root.querySelector('.actor');
+    this.leafBed = this.root.querySelector('.leaf-bed-static');
+    this.bodyMotion = this.root.querySelector('.body-motion');
+    this.bodyLook = this.root.querySelector('.body-look');
     this.rocker = this.root.querySelector('.rocker');
     this.shadow = this.root.querySelector('.ground-shadow');
     this.body = this.root.querySelector('.body');
@@ -68,6 +76,16 @@ export class PumpkinCharacter {
   }
 
   _gsap() { return getGsap(); }
+
+  _animationFrequency(channel) {
+    const value = Number(this.animationSettings?.[channel]);
+    return Number.isFinite(value) ? clamp(value, ANIMATION_FREQUENCY_MIN, ANIMATION_FREQUENCY_MAX) : 1;
+  }
+
+  setAnimationSettings(settings = {}) {
+    this.animationSettings = { ...DEFAULT_ANIMATION, ...settings };
+    return this;
+  }
 
   _track(tween) {
     if (tween) this.tweens.add(tween);
@@ -162,67 +180,82 @@ export class PumpkinCharacter {
     return this;
   }
 
-  _later(fn, min, max) {
+  restartIdle() {
+    if (this.destroyed || !this.idleStarted) return this;
+    this.stopIdle();
+    return this.startIdle();
+  }
+
+  _later(fn, min, max, frequency = 1) {
     const timer = wait(() => {
       this.idleTimers.delete(timer);
       if (this.destroyed || !this.idleStarted) return;
       fn();
-      if (!this.destroyed && this.idleStarted) this._later(fn, min, max);
-    }, randomBetween(min, max));
+      if (!this.destroyed && this.idleStarted) this._later(fn, min, max, frequency);
+    }, randomBetween(min, max) / frequency);
     this.idleTimers.add(timer);
   }
 
   _scheduleFloat() {
     const gsap = this._gsap();
-    if (!gsap || !this.floater) return;
-    this._trackIdle(gsap.to(this.floater, {
-      y: () => -randomBetween(15, 32),
-      duration: () => randomBetween(1.6, 2.4),
-      ease: 'sine.inOut', yoyo: true, repeat: -1, repeatRefresh: true,
-      overwrite: 'auto', delay: randomBetween(0, 1.5),
-    }));
+    if (!gsap || !this.bodyMotion) return;
+    // Use a fixed-amplitude from/to tween. Recomputing the target at every
+    // repeat causes a visible direction snap at the seam.
+    const amplitude = randomBetween(1.1, 1.8);
+    this._trackIdle(gsap.fromTo(this.bodyMotion,
+      { rotation: -amplitude, svgOrigin: REFERENCE_BODY_ORIGIN },
+      {
+        rotation: amplitude, svgOrigin: REFERENCE_BODY_ORIGIN,
+        duration: randomBetween(4.8, 6.4), ease: 'sine.inOut',
+        yoyo: true, repeat: -1, overwrite: 'auto', delay: randomBetween(0, 1.2),
+      },
+    ));
   }
 
   _scheduleBodyRock() {
     const gsap = this._gsap();
     if (!gsap || !this.rocker) return;
+    // A restrained squash-and-stretch gives the body a soft Disney-like
+    // settle without scaling the stationary leaf bed.
+    const squash = randomBetween(.975, .988);
     this._trackIdle(gsap.to(this.rocker, {
-      rotation: () => randomBetween(-1.2, 1.2),
-      scaleX: () => randomBetween(.985, 1.015),
-      duration: () => randomBetween(2.4, 3.8),
-      svgOrigin: '548 1035', ease: 'sine.inOut', yoyo: true,
-      repeat: -1, repeatRefresh: true, overwrite: 'auto', delay: randomBetween(0, 1.2),
+      scaleX: 2 - squash, scaleY: squash, svgOrigin: REFERENCE_BODY_ORIGIN,
+      duration: randomBetween(3.8, 5.4), ease: 'sine.inOut', yoyo: true,
+      repeat: -1, overwrite: 'auto', delay: randomBetween(0, 1.6),
     }));
   }
 
   _scheduleStemSway() {
     const gsap = this._gsap();
     if (!gsap || !this.stem) return;
-    this._trackIdle(gsap.to(this.stem, {
-      rotation: () => randomBetween(-3, 3),
-      svgOrigin: '548 360', duration: () => randomBetween(2.1, 3.4),
-      ease: 'sine.inOut', yoyo: true, repeat: -1, repeatRefresh: true,
-      overwrite: 'auto', delay: randomBetween(0, 1.8),
-    }));
+    const amplitude = randomBetween(1.4, 2.2);
+    this._trackIdle(gsap.fromTo(this.stem,
+      { rotation: -amplitude, svgOrigin: '548 360' },
+      {
+        rotation: amplitude, svgOrigin: '548 360',
+        duration: randomBetween(4.6, 6.6), ease: 'sine.inOut',
+        yoyo: true, repeat: -1, overwrite: 'auto', delay: randomBetween(0, 1.8),
+      },
+    ));
   }
 
   _scheduleBlink() {
     // Use a long, per-pumpkin randomized delay so blinks feel incidental
     // instead of landing on a shared metronome. A small minority are double
     // blinks, still handled by the same independently scheduled callback.
-    this._later(() => this.blink(Math.random() < .16, { idle: true }), BLINK_DELAY_MIN, BLINK_DELAY_MAX);
+    this._later(() => this.blink(Math.random() < .16, { idle: true }), BLINK_DELAY_MIN, BLINK_DELAY_MAX, this._animationFrequency('eyeFrequency'));
   }
 
   _scheduleLook() {
-    this._later(() => this.lookAt(randomBetween(-1, 1), randomBetween(-1, 1), { idle: true }), 3500, 8000);
+    this._later(() => this.lookAt(randomBetween(-1, 1), randomBetween(-1, 1), { idle: true }), 3500, 8000, this._animationFrequency('eyeFrequency'));
   }
 
   _scheduleFaceVariant() {
-    this._later(() => this._animateFaceVariant({ idle: true }), 2600, 6500);
+    this._later(() => this._animateFaceVariant({ idle: true }), 2600, 6500, this._animationFrequency('eyeFrequency'));
   }
 
   _scheduleMouth() {
-    this._later(() => this._animateMouth({ idle: true }), 2800, 7000);
+    this._later(() => this._animateMouth({ idle: true }), 2800, 7000, this._animationFrequency('mouthFrequency'));
   }
 
   _scheduleMicro() {
@@ -244,6 +277,8 @@ export class PumpkinCharacter {
     if (gsap) {
       // These layers are owned exclusively by idle, so always restore their neutral pose.
       gsap.set(this.floater, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      gsap.set(this.bodyMotion, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      gsap.set(this.bodyLook, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.rocker || this.body, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.stem, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.face, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
@@ -276,12 +311,17 @@ export class PumpkinCharacter {
 
   lookAt(dx = 0, dy = 0, { idle = false } = {}) {
     const gsap = this._gsap();
-    if (!gsap || !this.face) return this;
-    const x = clamp(Number(dx) || 0, -1, 1) * 8;
-    const y = clamp(Number(dy) || 0, -1, 1) * 5;
+    if (!gsap || !this.face || !this.bodyLook) return this;
+    const horizontal = clamp(Number(dx) || 0, -1, 1);
+    const x = horizontal * 6;
+    const y = clamp(Number(dy) || 0, -1, 1) * 3.5;
+    const bodyRotation = horizontal * 1.5;
+    const faceRotation = horizontal * .7;
     const tween = gsap.timeline({ defaults: { overwrite: 'auto' } });
-    tween.to(this.face, { x, y, duration: .28, ease: 'sine.out' })
-      .to(this.face, { x: 0, y: 0, duration: .5, ease: 'sine.inOut' });
+    tween.to(this.face, { x, y, rotation: faceRotation, duration: .68, svgOrigin: REFERENCE_FACE_ORIGIN, ease: 'sine.inOut' })
+      .to(this.bodyLook, { rotation: bodyRotation, duration: .68, svgOrigin: REFERENCE_BODY_ORIGIN, ease: 'sine.inOut' }, '<')
+      .to(this.face, { x: 0, y: 0, rotation: 0, duration: 1.15, ease: 'sine.inOut' })
+      .to(this.bodyLook, { rotation: 0, duration: 1.15, ease: 'sine.inOut' }, '<');
     return this._trackFor(tween, { idle });
   }
 
@@ -290,7 +330,7 @@ export class PumpkinCharacter {
     if (!gsap || !this.eyes) return this;
     const eyeClass = [...this.eyes.classList].find((name) => name.startsWith('eyes-')) || 'eyes-cute';
     let target = this.eyes;
-    let vars = { duration: .32, yoyo: true, repeat: 1, ease: 'sine.inOut', overwrite: 'auto' };
+    let vars = { duration: .85, yoyo: true, repeat: 1, ease: 'sine.inOut', overwrite: 'auto' };
     if (eyeClass === 'eyes-stars') {
       target = this.eyes.querySelectorAll('.eye-glint, .variant-eye-glint');
       vars = { scale: 1.35, transformOrigin: 'center center', ...vars };
@@ -319,7 +359,7 @@ export class PumpkinCharacter {
       // local to its own fill box and never introduce a root-space offset.
       scaleY: isRound ? randomBetween(1.02, 1.06) : randomBetween(.98, 1.02),
       scaleX: randomBetween(.99, 1.01),
-      y: randomBetween(-1.5, 1.5), duration: randomBetween(.28, .42),
+      y: randomBetween(-1.5, 1.5), duration: randomBetween(.8, 1.15),
       transformOrigin: '50% 50%', yoyo: true, repeat: 1,
       ease: 'sine.inOut', overwrite: 'auto',
     });
@@ -331,7 +371,7 @@ export class PumpkinCharacter {
     if (!gsap || !this.arms) return this;
     const tween = gsap.to(this.arms, {
       rotation: randomBetween(6, 10), svgOrigin: '548 800',
-      duration: .18, yoyo: true, repeat: 3, ease: 'sine.inOut', overwrite: 'auto',
+      duration: .38, yoyo: true, repeat: 3, ease: 'sine.inOut', overwrite: 'auto',
     });
     this._trackFor(tween, { idle });
     return this;
@@ -342,7 +382,7 @@ export class PumpkinCharacter {
     if (!gsap || !this.legs) return this;
     const tween = gsap.to(this.legs, {
       rotation: randomBetween(-3, 3), svgOrigin: '548 1030',
-      duration: .28, yoyo: true, repeat: 3, ease: 'sine.inOut', overwrite: 'auto',
+      duration: .55, yoyo: true, repeat: 3, ease: 'sine.inOut', overwrite: 'auto',
     });
     this._trackFor(tween, { idle });
     return this;
@@ -353,7 +393,7 @@ export class PumpkinCharacter {
     if (!gsap || !this.hat) return this;
     const tween = gsap.to(this.hat, {
       rotation: randomBetween(5, 8), svgOrigin: '548 330',
-      duration: .22, yoyo: true, repeat: 1, ease: 'sine.inOut', overwrite: 'auto',
+      duration: .5, yoyo: true, repeat: 1, ease: 'sine.inOut', overwrite: 'auto',
     });
     this._trackFor(tween, { idle });
     return this;

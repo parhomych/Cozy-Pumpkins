@@ -14,7 +14,8 @@ function connect() {
   socket.on('disconnect', () => showConnection('Reconnecting…'));
   socket.on('connect_error', () => showConnection('Reconnecting…'));
   socket.io?.on('reconnect_attempt', () => showConnection('Reconnecting…'));
-  socket.on('scene:init', (scene = {}) => { renderer.sync(Array.isArray(scene.pumpkins) ? scene.pumpkins : []); showConnection('Live', false); });
+  socket.on('scene:init', (scene = {}) => { renderer.setSettings(scene.settings || {}); renderer.sync(Array.isArray(scene.pumpkins) ? scene.pumpkins : []); showConnection('Live', false); });
+  socket.on('settings:updated', ({ settings } = {}) => renderer.setSettings(settings || {}));
   socket.on('pumpkin:spawned', ({ pumpkin }) => renderer.add(pumpkin, { immediate: true }));
   socket.on('pumpkin:updated', ({ pumpkin }) => renderer.update(pumpkin));
   socket.on('pumpkin:move', (payload) => renderer.applyMove(payload));
