@@ -2,13 +2,19 @@ import crypto from 'node:crypto';
 import { normalizeName, normalizeText, finiteNumber, safeId } from '../utils/normalize.js';
 import { DEFAULT_CUSTOMIZATION, parseCustomization, sanitizeCustomization } from './customization-parser.js';
 import { findSpawnPosition, isPositionValid } from './spatial-rules.js';
+import { DEFAULT_GROWTH_STAGES } from './growth-stages.js';
 
 const DONATION_PROVIDERS = new Set(['donationalerts', 'donatex', 'memealerts']);
 
-export function stageForTotal(total, thresholds) { if (total >= thresholds.stage4) return 4; if (total >= thresholds.stage3) return 3; if (total >= thresholds.stage2) return 2; return 1; }
+export function stageForTotal(total, thresholds, growthStages = DEFAULT_GROWTH_STAGES) {
+  for (const stage of [4, 3, 2]) {
+    if (growthStages[`stage${stage}`] && total >= thresholds[`stage${stage}`]) return stage;
+  }
+  return 1;
+}
 export function publicPumpkin(pumpkin) {
   if (!pumpkin) return null;
-  return { id: pumpkin.id, ownerNormalized: pumpkin.ownerNormalized, displayName: pumpkin.displayName, twitchUserId: pumpkin.twitchUserId, twitchUsername: pumpkin.twitchUsername, totalDonated: pumpkin.totalDonated, currency: pumpkin.currency, stage: pumpkin.stage, x: pumpkin.x, y: pumpkin.y, isAirborne: pumpkin.isAirborne, parentId: pumpkin.parentId, stackOffsetY: pumpkin.stackOffsetY, customization: sanitizeCustomization(pumpkin.customization) };
+  return { id: pumpkin.id, ownerNormalized: pumpkin.ownerNormalized, displayName: pumpkin.displayName, showDisplayName: pumpkin.showDisplayName ?? true, twitchUserId: pumpkin.twitchUserId, twitchUsername: pumpkin.twitchUsername, totalDonated: pumpkin.totalDonated, currency: pumpkin.currency, stage: pumpkin.stage, x: pumpkin.x, y: pumpkin.y, isAirborne: pumpkin.isAirborne, parentId: pumpkin.parentId, stackOffsetY: pumpkin.stackOffsetY, customization: sanitizeCustomization(pumpkin.customization) };
 }
 function parseDonation(raw) {
   const provider = raw?.provider ?? 'donationalerts';
@@ -70,7 +76,7 @@ export class DonationService {
       }
       const customization = parseCustomization(event.message, pumpkin.customization, settings.spawnCommand);
       const total = pumpkin.totalDonated + event.amount;
-      const stage = stageForTotal(total, settings.growthThresholds); const patch = { totalDonated: total, stage, displayName: event.displayName, ownerNormalized: event.ownerNormalized };
+      const stage = stageForTotal(total, settings.growthThresholds, settings.growthStages); const patch = { totalDonated: total, stage, displayName: event.displayName, ownerNormalized: event.ownerNormalized };
       if (customization.recognized) patch.customization = customization.customization;
       pumpkin = this.db.updatePumpkin(pumpkin.id, patch);
       result = { duplicate: false, eventId: event.eventId, pumpkin: publicPumpkin(pumpkin), spawned, evolved: oldStage !== stage, previousStage: oldStage, currencyApplied: true };

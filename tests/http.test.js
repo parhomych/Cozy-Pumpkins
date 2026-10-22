@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from '../server.js';
 import { Database } from '../src/db/database.js';
 import { TokenStore } from '../src/auth/token-store.js';
+import { DonationService } from '../src/engine/donations.js';
 import { testConfig } from './helpers.js';
 
 class CloseTrackingWebSocket {
@@ -153,6 +154,7 @@ test('growth thresholds use configured defaults, persist valid values, and rejec
     const firstRead = await request(port, '/api/settings');
     const defaults = JSON.parse(firstRead.body);
     assert.deepEqual(defaults.settings.growthThresholds, config.thresholds);
+    assert.deepEqual(defaults.settings.growthStages, { stage2: true, stage3: true, stage4: true });
     const cookie = firstRead.headers['set-cookie']?.[0]?.split(';')[0];
     const validThresholds = { stage2: 350, stage3: 1200, stage4: 4500 };
     const update = await request(port, '/api/settings', {
@@ -179,6 +181,48 @@ test('growth thresholds use configured defaults, persist valid values, and rejec
     }
     const finalRead = await request(port, '/api/settings');
     assert.deepEqual(JSON.parse(finalRead.body).settings.growthThresholds, validThresholds);
+  } finally {
+    runtime.db.close();
+    await new Promise((resolve) => runtime.server.close(resolve));
+  }
+});
+
+test('HTTP growth-stage updates validate settings and recalculate existing pumpkins', async () => {
+  const config = testConfig();
+  const db = new Database(':memory:');
+  const runtime = createServer({ config, db, publicDir: null });
+  await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+  const port = runtime.server.address().port;
+  try {
+    const firstRead = await request(port, '/api/settings');
+    const cookie = firstRead.headers['set-cookie']?.[0]?.split(';')[0];
+    const service = new DonationService({ db, config, idFactory: () => 'http-stage-pumpkin' });
+    const spawn = service.handle({
+      id: 'http-stage-donation',
+      name: 'HTTP Stage Viewer',
+      amount: config.thresholds.stage3,
+      currency: config.pumpkinCurrency,
+      message: '!тыковка',
+    });
+    assert.equal(spawn.pumpkin.stage, 3);
+
+    const update = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ growthStages: { stage2: true, stage3: false, stage4: true } }),
+    });
+    assert.equal(update.status, 200);
+    assert.deepEqual(JSON.parse(update.body).settings.growthStages, { stage2: true, stage3: false, stage4: true });
+    assert.equal(db.getPumpkin('http-stage-pumpkin').stage, 2);
+
+    const invalid = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ growthStages: { stage2: true, stage3: 0, stage4: true } }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(JSON.parse(invalid.body).error, 'invalid_growth_stages');
+    assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: false, stage4: true });
   } finally {
     runtime.db.close();
     await new Promise((resolve) => runtime.server.close(resolve));
@@ -217,6 +261,81 @@ test('growth multipliers use configured defaults, persist four valid values, and
     }
     const finalRead = await request(port, '/api/settings');
     assert.deepEqual(JSON.parse(finalRead.body).settings.growthMultipliers, validMultipliers);
+  } finally {
+    runtime.db.close();
+    await new Promise((resolve) => runtime.server.close(resolve));
+  }
+});
+
+test('name visibility settings and pumpkin preferences are readable, mutable, and validated', async () => {
+  const config = testConfig();
+  const runtime = createServer({ config, db: new Database(':memory:'), publicDir: null });
+  await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+  const port = runtime.server.address().port;
+  try {
+    const firstRead = await request(port, '/api/settings');
+    const cookie = firstRead.headers['set-cookie']?.[0]?.split(';')[0];
+    assert.equal(JSON.parse(firstRead.body).settings.showPumpkinNames, true);
+    assert.equal(JSON.parse(firstRead.body).settings.pumpkinNameFontSize, 14);
+
+    const hideAll = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ showPumpkinNames: false }),
+    });
+    assert.equal(hideAll.status, 200);
+    assert.equal(JSON.parse(hideAll.body).settings.showPumpkinNames, false);
+    const invalidGlobal = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ showPumpkinNames: 'false' }),
+    });
+    assert.equal(invalidGlobal.status, 400);
+    assert.equal(JSON.parse(invalidGlobal.body).error, 'invalid_show_pumpkin_names');
+
+    const fontSizeUpdate = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ pumpkinNameFontSize: 28 }),
+    });
+    assert.equal(fontSizeUpdate.status, 200);
+    assert.equal(JSON.parse(fontSizeUpdate.body).settings.pumpkinNameFontSize, 28);
+    const invalidFontSize = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ pumpkinNameFontSize: 49 }),
+    });
+    assert.equal(invalidFontSize.status, 400);
+    assert.equal(JSON.parse(invalidFontSize.body).error, 'invalid_pumpkin_name_font_size');
+
+    const donation = await request(port, '/api/dev/donation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ id: 'name-visibility-http-donation', name: 'HTTP Donor', amount: 10, currency: 'RUB', message: '!тыковка' }),
+    });
+    assert.equal(donation.status, 201);
+    const pumpkinId = JSON.parse(donation.body).result.pumpkin.id;
+    const hideOne = await request(port, `/api/pumpkins/${pumpkinId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ showDisplayName: false }),
+    });
+    assert.equal(hideOne.status, 200);
+    assert.equal(JSON.parse(hideOne.body).pumpkin.showDisplayName, false);
+
+    const invalidIndividual = await request(port, `/api/pumpkins/${pumpkinId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ showDisplayName: 0 }),
+    });
+    assert.equal(invalidIndividual.status, 400);
+    assert.equal(JSON.parse(invalidIndividual.body).error, 'invalid_show_display_name');
+
+    const pumpkinRead = await request(port, `/api/pumpkins/${pumpkinId}`);
+    assert.equal(JSON.parse(pumpkinRead.body).pumpkin.showDisplayName, false);
+    const finalSettings = await request(port, '/api/settings');
+    assert.equal(JSON.parse(finalSettings.body).settings.showPumpkinNames, false);
+    assert.equal(JSON.parse(finalSettings.body).settings.pumpkinNameFontSize, 28);
   } finally {
     runtime.db.close();
     await new Promise((resolve) => runtime.server.close(resolve));

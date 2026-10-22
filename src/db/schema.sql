@@ -1,6 +1,7 @@
 PRAGMA foreign_keys = ON;
 CREATE TABLE IF NOT EXISTS pumpkins (
   id TEXT PRIMARY KEY, owner_key TEXT NOT NULL UNIQUE, owner_normalized TEXT NOT NULL, display_name TEXT NOT NULL,
+  show_display_name INTEGER NOT NULL DEFAULT 1 CHECK(show_display_name IN (0, 1)),
   twitch_user_id TEXT, twitch_username TEXT, total_donated REAL NOT NULL DEFAULT 0, currency TEXT NOT NULL,
   stage INTEGER NOT NULL DEFAULT 1 CHECK(stage BETWEEN 1 AND 4), x REAL NOT NULL, y REAL NOT NULL,
   is_airborne INTEGER NOT NULL DEFAULT 0, parent_id TEXT REFERENCES pumpkins(id) ON DELETE SET NULL,
@@ -22,10 +23,13 @@ CREATE TABLE IF NOT EXISTS redemptions (
 );
 CREATE TABLE IF NOT EXISTS settings (
   id INTEGER PRIMARY KEY CHECK(id = 1), ground_y REAL NOT NULL, no_go_zone_json TEXT NOT NULL,
+  show_pumpkin_names INTEGER NOT NULL DEFAULT 1 CHECK(show_pumpkin_names IN (0, 1)),
+  pumpkin_name_font_size INTEGER NOT NULL DEFAULT 14 CHECK(pumpkin_name_font_size BETWEEN 8 AND 48),
   pumpkin_currency TEXT NOT NULL, reward_mapping_json TEXT NOT NULL,
   min_spawn_donation REAL NOT NULL DEFAULT 0 CHECK(min_spawn_donation >= 0),
   spawn_command TEXT NOT NULL DEFAULT '!тыковка',
   growth_thresholds_json TEXT,
+  growth_stages_json TEXT NOT NULL DEFAULT '{"stage2":true,"stage3":true,"stage4":true}',
   growth_multipliers_json TEXT,
   animation_json TEXT NOT NULL DEFAULT '{"eyeFrequency":1,"mouthFrequency":1}',
   tower_animation_json TEXT NOT NULL DEFAULT '{"swayAmplitude":12,"swayDuration":2,"rotationMultiplier":1,"bendMultiplier":1,"lifetimeMinSeconds":3,"lifetimeMaxSeconds":6,"stackOrder":"random"}', updated_at TEXT NOT NULL

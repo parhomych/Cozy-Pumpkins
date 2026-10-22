@@ -551,6 +551,20 @@ label {
   background: #f5f2e9;
 }
 
+.growth-stage.is-disabled {
+  opacity: .6;
+}
+
+.growth-stage-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.growth-stage-toggle input {
+  width: auto;
+}
+
 .growth-stage-preview {
   display: grid;
   min-width: 0;

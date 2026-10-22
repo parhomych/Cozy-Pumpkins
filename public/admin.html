@@ -109,6 +109,11 @@
                      <label>Mouth movement frequency (×)<input id="mouth-frequency" type="number" min="0.1" max="10" step="0.1"></label>
                    </div>
                  </div>
+                 <div class="name-appearance-settings">
+                   <h3>Donor name appearance</h3>
+                   <label for="pumpkin-name-font-size">Font size (<output id="pumpkin-name-font-size-value">14</output> px)</label>
+                   <input id="pumpkin-name-font-size" type="range" min="8" max="48" step="1" value="14">
+                 </div>
                  <div>
                    <h3>Pumpkin tower animation</h3>
                    <p class="muted">Changes apply live to the active tower. Set how long it stands before every pumpkin falls and rolls away.</p>
@@ -173,6 +178,10 @@
               <div class="stat"><small>Owner</small><strong id="owner-name">—</strong></div>
               <div class="stat"><small>Total donated</small><strong id="total-donated">—</strong></div>
             </div>
+            <div class="action-row">
+              <input id="show-display-name" type="checkbox">
+              <label for="show-display-name">Show donor name</label>
+            </div>
             <div class="form-grid">
               <label>Display name<input id="display-name"></label>
               <label>Twitch username<input id="twitch-username" placeholder="not linked"></label>
@@ -220,24 +229,27 @@
           <article class="growth-stage">
             <h4>Stage 1 · Initial</h4>
             <div id="growth-stage-1-preview" class="growth-stage-preview" data-growth-preview-stage="1" aria-label="Stage 1 initial preview"></div>
-            <p class="muted">Starting state</p>
+            <p class="muted">Starting state · always active</p>
             <label>Size ×<input id="growth-multiplier-stage-1" type="number" min="0.25" max="3" step="0.01" required value="0.58"></label>
           </article>
           <article class="growth-stage">
             <h4>Stage 2</h4>
             <div id="growth-stage-2-preview" class="growth-stage-preview" data-growth-preview-stage="2" aria-label="Stage 2 preview"></div>
+            <label class="growth-stage-toggle"><input id="growth-stage-enabled-2" type="checkbox" checked> Active</label>
             <label>At <span data-growth-currency>RUB</span><input id="growth-threshold-stage-2" type="number" min="0" step="any" required></label>
             <label>Size ×<input id="growth-multiplier-stage-2" type="number" min="0.25" max="3" step="0.01" required value="0.82"></label>
           </article>
           <article class="growth-stage">
             <h4>Stage 3</h4>
             <div id="growth-stage-3-preview" class="growth-stage-preview" data-growth-preview-stage="3" aria-label="Stage 3 preview"></div>
+            <label class="growth-stage-toggle"><input id="growth-stage-enabled-3" type="checkbox" checked> Active</label>
             <label>At <span data-growth-currency>RUB</span><input id="growth-threshold-stage-3" type="number" min="0" step="any" required></label>
             <label>Size ×<input id="growth-multiplier-stage-3" type="number" min="0.25" max="3" step="0.01" required value="1"></label>
           </article>
           <article class="growth-stage">
             <h4>Stage 4</h4>
             <div id="growth-stage-4-preview" class="growth-stage-preview" data-growth-preview-stage="4" aria-label="Stage 4 preview"></div>
+            <label class="growth-stage-toggle"><input id="growth-stage-enabled-4" type="checkbox" checked> Active</label>
             <label>At <span data-growth-currency>RUB</span><input id="growth-threshold-stage-4" type="number" min="0" step="any" required></label>
             <label>Size ×<input id="growth-multiplier-stage-4" type="number" min="0.25" max="3" step="0.01" required value="1.12"></label>
           </article>

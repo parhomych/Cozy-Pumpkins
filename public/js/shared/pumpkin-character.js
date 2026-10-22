@@ -6,6 +6,9 @@ const randomBetween = (min, max) => min + Math.random() * (max - min);
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 const SCENE_WIDTH = 1920;
 const SCENE_HEIGHT = 1080;
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
+const REFERENCE_VIEWBOX = 1095;
+const DEFAULT_NAME_FONT_SIZE = 14;
 const REFERENCE_FACE_ORIGIN = '548 665';
 const REFERENCE_BODY_ORIGIN = '548 1035';
 const STAGE_ONE_SPROUT_ORIGIN = '1400 635';
@@ -20,13 +23,17 @@ const DEFAULT_ANIMATION = Object.freeze({ eyeFrequency: 1, mouthFrequency: 1 });
 
 /** One independently animated pumpkin. Positioning lives on .mover; idle body motion is below the inert .floater wrapper. */
 export class PumpkinCharacter {
-  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene', animationSettings = null, previewSize = null, growthMultipliers = null } = {}) {
+  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene', animationSettings = null, previewSize = null, growthMultipliers = null, showPumpkinNames = true, pumpkinNameFontSize = DEFAULT_NAME_FONT_SIZE } = {}) {
     this.positioning = positioning;
     this.previewSize = Number.isFinite(Number(previewSize)) ? Number(previewSize) : null;
     this.animationSettings = { ...DEFAULT_ANIMATION, ...(animationSettings || {}) };
     this.growthMultipliers = normalizeGrowthMultipliers(growthMultipliers || {});
+    this.showPumpkinNames = showPumpkinNames !== false;
+    this.pumpkinNameFontSize = this._normalizeNameFontSize(pumpkinNameFontSize);
     this.data = { ...pumpkin, customization: normalizeCustomization(pumpkin.customization) };
     this.root = createPumpkinSvg(this.data);
+    this.nameLabel = null;
+    this.nameLabelName = null;
     this.root.classList.toggle('is-interactive', interactive);
     this.root.addEventListener('pointerdown', (event) => onPointerDown?.(this.data, event));
 
@@ -53,6 +60,7 @@ export class PumpkinCharacter {
     this.lastMoveSequence = -1;
 
     this._applyStageGeometry(this.data.stage);
+    this._refreshNameLabel();
     this.setPositionImmediate(this.x, this.y, this.isAirborne);
     this._context = getGsap()?.context?.(() => {}, this.root) || null;
   }
@@ -117,6 +125,114 @@ export class PumpkinCharacter {
     return this;
   }
 
+  setNameVisibility(showPumpkinNames = this.showPumpkinNames) {
+    this.showPumpkinNames = showPumpkinNames !== false;
+    this._refreshNameLabel();
+    return this;
+  }
+
+  setNameFontSize(size = DEFAULT_NAME_FONT_SIZE) {
+    this.pumpkinNameFontSize = this._normalizeNameFontSize(size);
+    this._layoutNameLabel();
+    return this;
+  }
+
+  _normalizeNameFontSize(size) {
+    const value = Number(size);
+    return Number.isInteger(value) && value >= 8 && value <= 48 ? value : DEFAULT_NAME_FONT_SIZE;
+  }
+
+  _refreshNameLabel() {
+    const name = typeof this.data.displayName === 'string' ? this.data.displayName.trim() : '';
+    this.root.setAttribute('aria-label', name || 'Pumpkin');
+    if (name !== this.nameLabelName) {
+      this.nameLabel?.remove();
+      this.nameLabel = null;
+      this.nameLabelLines = null;
+      this.nameLabelName = name;
+      if (name) {
+        this.nameLabel = document.createElementNS(SVG_NAMESPACE, 'text');
+        this.nameLabel.setAttribute('class', 'donor-name-label');
+        this.nameLabel.setAttribute('aria-hidden', 'true');
+        this.nameLabel.setAttribute('pointer-events', 'none');
+        this.nameLabel.setAttribute('font-family', 'Tahoma, sans-serif');
+        this.nameLabel.setAttribute('font-weight', '700');
+        this.nameLabel.setAttribute('fill', '#fff');
+        this.nameLabel.setAttribute('stroke', '#000');
+        this.nameLabel.setAttribute('paint-order', 'stroke');
+        this.nameLabel.setAttribute('text-anchor', 'middle');
+        this.nameLabel.style.display = 'none';
+        this.floater?.append(this.nameLabel);
+      }
+    }
+    if (!this.nameLabel) return;
+    this.nameLabel.style.display = this.positioning === 'scene'
+      && this.showPumpkinNames
+      && this.data.showDisplayName !== false
+      ? ''
+      : 'none';
+    this._layoutNameLabel();
+  }
+
+  _layoutNameLabel() {
+    if (!this.nameLabel) return;
+    const stageSize = this.stageSize || REFERENCE_DISPLAY_SIZE;
+    const halfSize = stageSize / 2;
+    const left = this.x - halfSize;
+    const right = this.x + halfSize;
+    let anchor = 'middle';
+    let labelX = REFERENCE_VIEWBOX / 2;
+    let availableWidth = Math.max(1, Math.min(this.x, SCENE_WIDTH - this.x) * 2);
+    if (left < 0) {
+      anchor = 'start';
+      labelX = -left * REFERENCE_VIEWBOX / stageSize;
+      availableWidth = SCENE_WIDTH - this.x;
+    } else if (right > SCENE_WIDTH) {
+      anchor = 'end';
+      labelX = (SCENE_WIDTH - left) * REFERENCE_VIEWBOX / stageSize;
+      availableWidth = this.x;
+    }
+
+    const fontSize = this.pumpkinNameFontSize * REFERENCE_VIEWBOX / stageSize;
+    const maxCharacters = Math.max(1, Math.floor(availableWidth / (this.pumpkinNameFontSize * 0.6)));
+    const words = this.nameLabelName.split(/\s+/u);
+    const lines = [];
+    let line = '';
+    for (const word of words) {
+      const characters = Array.from(word);
+      for (let index = 0; index < characters.length; index += maxCharacters) {
+        const chunk = characters.slice(index, index + maxCharacters).join('');
+        if (line && line.length + 1 + chunk.length > maxCharacters) {
+          lines.push(line);
+          line = '';
+        }
+        line = line ? `${line} ${chunk}` : chunk;
+        if (index + maxCharacters < characters.length) {
+          lines.push(line);
+          line = '';
+        }
+      }
+    }
+    if (line) lines.push(line);
+
+    this.nameLabel.setAttribute('text-anchor', anchor);
+    this.nameLabel.setAttribute('x', String(labelX));
+    this.nameLabel.setAttribute('font-size', String(fontSize));
+    this.nameLabel.setAttribute('stroke-width', String(fontSize * 0.2));
+    if (lines.join('\n') !== this.nameLabelLines) {
+      this.nameLabelLines = lines.join('\n');
+      this.nameLabel.replaceChildren(...lines.map((text) => {
+        const tspan = document.createElementNS(SVG_NAMESPACE, 'tspan');
+        tspan.textContent = text;
+        return tspan;
+      }));
+    }
+    [...this.nameLabel.children].forEach((tspan, index) => {
+      tspan.setAttribute('x', String(labelX));
+      tspan.setAttribute('y', String(-20 - (lines.length - index - 1) * fontSize * 1.15));
+    });
+  }
+
   _track(tween) {
     if (tween) this.tweens.add(tween);
     return tween;
@@ -163,6 +279,7 @@ export class PumpkinCharacter {
     } else {
       this.root.style.removeProperty('--pumpkin-preview-size');
     }
+    this._layoutNameLabel();
     return this;
   }
 
@@ -177,6 +294,7 @@ export class PumpkinCharacter {
     } else {
       this.mover?.setAttribute('transform', `translate(${this.x - REFERENCE_DISPLAY_SIZE / 2} ${this.y - REFERENCE_DISPLAY_SIZE})`);
     }
+    this._layoutNameLabel();
   }
 
   setPositionImmediate(x, y, isAirborne = this.isAirborne) {
@@ -209,8 +327,11 @@ export class PumpkinCharacter {
     next.classList.toggle('is-interactive', this.root.classList.contains('is-interactive'));
     next.classList.toggle('is-selected', this.root.classList.contains('is-selected'));
     this.root.replaceChildren(...[...next.childNodes]);
-    this.root.setAttribute('aria-label', this.data.displayName || 'Pumpkin');
     this._bindLayers();
+    this.nameLabel = null;
+    this.nameLabelLines = null;
+    this.nameLabelName = null;
+    this._refreshNameLabel();
     this._applyStageGeometry(this.data.stage);
     this._setPosition(this.x, this.y);
     if (wasIdle) this.startIdle();

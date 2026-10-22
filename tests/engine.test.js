@@ -122,6 +122,19 @@ test('donation processing applies persisted cumulative growth thresholds', () =>
   db.close();
 });
 
+test('donation growth skips disabled stages without shifting the remaining thresholds', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  db.updateSettings({
+    growthThresholds: { stage2: 100, stage3: 250, stage4: 500 },
+    growthStages: { stage2: false, stage3: true, stage4: true },
+  }, config);
+  const service = new DonationService({ db, config, idFactory: () => 'disabled-stage-pumpkin' });
+  const pumpkin = service.handle({ id: 'disabled-stage-donation', name: 'Stage Viewer', amount: 250, currency: 'RUB', message: '!тыковка' }).pumpkin;
+  assert.equal(pumpkin.stage, 3);
+  db.close();
+});
+
 test('donation event IDs and donor ownership are scoped to their provider', () => {
   const config = testConfig();
   const db = testDatabase(config);
@@ -337,6 +350,16 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
   assert.deepEqual(ioEvents.at(-1)[1].settings.growthThresholds, growthThresholds);
   assert.deepEqual(db.getSettings(config).growthThresholds, growthThresholds);
+  assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: true, stage4: true });
+  const stageService = new DonationService({ db, config, idFactory: () => 'socket-stage-pumpkin' });
+  stageService.handle({ id: 'socket-stage-donation', name: 'Socket Stage Viewer', amount: 1300, currency: 'RUB', message: '!тыковка' });
+  socketEvents.get('admin:settings:update')({ growthStages: { stage2: true, stage3: false, stage4: true } });
+  assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: false, stage4: true });
+  assert.equal(db.getPumpkin('socket-stage-pumpkin').stage, 2);
+  assert.ok(ioEvents.some(([event, payload]) => event === 'pumpkin:updated' && payload.pumpkin.id === 'socket-stage-pumpkin' && payload.pumpkin.stage === 2));
+  socketEvents.get('admin:settings:update')({ growthStages: { stage2: true, stage3: 0, stage4: true } });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_growth_stages' }]);
+  assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: false, stage4: true });
   const growthMultipliers = { stage1: 0.5, stage2: 0.8, stage3: 1.15, stage4: 1.4 };
   socketEvents.get('admin:settings:update')({ growthMultipliers });
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
@@ -644,4 +667,77 @@ test('spawn rule settings persist and broadcast through Socket.IO without accept
   assert.equal(db.getSettings(config).minSpawnDonation, 250);
   assert.equal(db.getSettings(config).spawnCommand, '!pumpkin');
   db.close();
+});
+
+test('pumpkin name visibility defaults on, persists, and is included in the initial scene', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const donation = new DonationService({ db, config, idFactory: () => 'name-visibility-pumpkin' });
+  const result = donation.handle({ id: 'name-visibility-donation', name: 'Name Viewer', amount: 10, currency: 'RUB', message: '!тыковка' });
+  assert.equal(db.getPumpkin(result.pumpkin.id).showDisplayName, true);
+  assert.equal(db.getSettings(config).showPumpkinNames, true);
+  assert.equal(db.getSettings(config).pumpkinNameFontSize, 14);
+
+  db.updatePumpkin(result.pumpkin.id, { showDisplayName: false });
+  db.updateSettings({ showPumpkinNames: false, pumpkinNameFontSize: 20 }, config);
+  assert.equal(db.getPumpkin(result.pumpkin.id).showDisplayName, false);
+  assert.equal(db.getSettings(config).showPumpkinNames, false);
+  assert.equal(db.getSettings(config).pumpkinNameFontSize, 20);
+
+  const ioEvents = [];
+  const socketEvents = new Map();
+  let connection;
+  const io = {
+    use() {},
+    on(event, handler) { if (event === 'connection') connection = handler; },
+    emit(...args) { ioEvents.push(args); },
+  };
+  attachSocketHandlers(io, { config, db, statuses: { all: () => [] } });
+  const socket = {
+    data: { admin: true },
+    handshake: { headers: {} },
+    on(event, handler) { socketEvents.set(event, handler); },
+    emit(...args) { ioEvents.push(['socket', ...args]); },
+  };
+  connection(socket);
+  const scene = ioEvents.find(([target, event]) => target === 'socket' && event === 'scene:init')?.[2];
+  assert.equal(scene.settings.showPumpkinNames, false);
+  assert.equal(scene.settings.pumpkinNameFontSize, 20);
+  assert.equal(scene.pumpkins[0].showDisplayName, false);
+
+  socketEvents.get('admin:settings:update')({ showPumpkinNames: true, pumpkinNameFontSize: 24 });
+  assert.equal(ioEvents.findLast(([event]) => event === 'settings:updated')?.[1]?.settings.showPumpkinNames, true);
+  assert.equal(ioEvents.findLast(([event]) => event === 'settings:updated')?.[1]?.settings.pumpkinNameFontSize, 24);
+  assert.equal(db.getSettings(config).pumpkinNameFontSize, 24);
+  socketEvents.get('admin:settings:update')({ pumpkinNameFontSize: 49 });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_pumpkin_name_font_size' }]);
+  socketEvents.get('admin:pumpkin:update')({ id: result.pumpkin.id, patch: { showDisplayName: true } });
+  assert.equal(ioEvents.findLast(([event]) => event === 'pumpkin:updated')?.[1]?.pumpkin.showDisplayName, true);
+  socketEvents.get('admin:pumpkin:update')({ id: result.pumpkin.id, patch: { showDisplayName: 'false' } });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'pumpkin-update', message: 'invalid_show_display_name' }]);
+  db.close();
+});
+
+test('existing databases migrate name visibility fields with enabled defaults', () => {
+  const config = testConfig();
+  const directory = mkdtempSync(path.join(tmpdir(), 'cozy-pumpkin-name-visibility-'));
+  const databasePath = path.join(directory, 'scene.sqlite');
+  try {
+    const db = new Database(databasePath);
+    db.getSettings(config);
+    const donation = new DonationService({ db, config, idFactory: () => 'legacy-name-pumpkin' });
+    const result = donation.handle({ id: 'legacy-name-donation', name: 'Legacy Viewer', amount: 100, currency: 'RUB', message: '!тыковка' });
+    assert.equal(result.pumpkin.displayName, 'Legacy Viewer');
+    db.sqlite.exec('ALTER TABLE settings DROP COLUMN show_pumpkin_names; ALTER TABLE settings DROP COLUMN pumpkin_name_font_size; ALTER TABLE pumpkins DROP COLUMN show_display_name;');
+    db.close();
+
+    const legacy = new Database(databasePath);
+    assert.equal(legacy.getSettings(config).showPumpkinNames, true);
+    assert.equal(legacy.getSettings(config).pumpkinNameFontSize, 14);
+    assert.equal(legacy.getPumpkin(result.pumpkin.id).showDisplayName, true);
+    assert.equal(legacy.getPumpkin(result.pumpkin.id).displayName, 'Legacy Viewer');
+    legacy.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

@@ -1,32 +1,43 @@
 import { PumpkinCharacter } from './pumpkin-character.js?v=stage1-face-20261022';
 
 const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
+const DEFAULT_PUMPKIN_NAME_FONT_SIZE = 14;
+function normalizePumpkinNameFontSize(size) {
+  const value = Number(size);
+  return Number.isInteger(value) && value >= 8 && value <= 48 ? value : DEFAULT_PUMPKIN_NAME_FONT_SIZE;
+}
 
 export class PumpkinRenderer {
   constructor(container, { interactive = false, onSelect = null, settings = null } = {}) {
-    this.container = container; this.interactive = interactive; this.onSelect = onSelect; this.settings = settings || {}; this.characters = new Map(); this.sequence = new Map();
+    this.container = container; this.interactive = interactive; this.onSelect = onSelect; this.settings = { showPumpkinNames: true, pumpkinNameFontSize: DEFAULT_PUMPKIN_NAME_FONT_SIZE, ...(settings || {}) }; this.settings.pumpkinNameFontSize = normalizePumpkinNameFontSize(this.settings.pumpkinNameFontSize); this.characters = new Map(); this.sequence = new Map();
     this.container?.classList.add('pumpkin-layer'); this.towerTimers = new Set(); this.towerTweens = new Set(); this.towerMotion = null; this.towerParticipants = []; this.towerPayload = {}; this.towerSwayActive = false; this.towerRoll = null;
   }
   add(pumpkin, { immediate = true } = {}) {
     if (!pumpkin?.id) return null;
     if (this.characters.has(pumpkin.id)) return this.update(pumpkin, { immediate });
-    const character = new PumpkinCharacter(pumpkin, { positioning: 'scene', interactive: this.interactive, animationSettings: this.settings.animation, growthMultipliers: this.settings.growthMultipliers, onPointerDown: (data, event) => this.onSelect?.(data.id, data, event) });
+    const character = new PumpkinCharacter(pumpkin, { positioning: 'scene', interactive: this.interactive, animationSettings: this.settings.animation, growthMultipliers: this.settings.growthMultipliers, showPumpkinNames: this.settings.showPumpkinNames, pumpkinNameFontSize: this.settings.pumpkinNameFontSize, onPointerDown: (data, event) => this.onSelect?.(data.id, data, event) });
     this.characters.set(pumpkin.id, character); this.sequence.set(pumpkin.id, -1); this.container?.append(character.root); character.startIdle(); return character;
   }
   update(pumpkin, { immediate = false } = {}) {
     const character = this.characters.get(pumpkin?.id); if (!character) return this.add(pumpkin, { immediate: true });
     const previousStage = character.data.stage;
     character.data = { ...character.data, ...pumpkin, customization: pumpkin.customization || character.data.customization };
+    character.setNameVisibility(this.settings.showPumpkinNames);
     if (pumpkin.customization) character.applyCustomization(pumpkin.customization);
     if (pumpkin.stage !== undefined && Number(pumpkin.stage) !== Number(previousStage)) character.evolve(pumpkin.stage);
     character.moveTo(pumpkin.x, pumpkin.y, { immediate, isAirborne: pumpkin.isAirborne }); return character;
+  }
+  setNameFontSize(size) {
+    this.settings.pumpkinNameFontSize = normalizePumpkinNameFontSize(size);
+    for (const character of this.characters.values()) character.setNameFontSize(this.settings.pumpkinNameFontSize);
+    return this;
   }
   setSettings(settings = {}) {
     const wasSwaying = this.towerSwayActive;
     const participants = this.towerParticipants;
     const payload = this.towerPayload;
-    this.settings = { ...this.settings, ...settings, animation: { ...(this.settings.animation || {}), ...(settings.animation || {}) }, towerAnimation: { ...DEFAULT_TOWER_ANIMATION, ...(this.settings.towerAnimation || {}), ...(settings.towerAnimation || {}) }, growthMultipliers: { ...(this.settings.growthMultipliers || {}), ...(settings.growthMultipliers || {}) } };
-    for (const character of this.characters.values()) { character.setAnimationSettings(this.settings.animation); character.setGrowthMultipliers(this.settings.growthMultipliers); character.restartIdle(); }
+    this.settings = { ...this.settings, ...settings, animation: { ...(this.settings.animation || {}), ...(settings.animation || {}) }, towerAnimation: { ...DEFAULT_TOWER_ANIMATION, ...(this.settings.towerAnimation || {}), ...(settings.towerAnimation || {}) }, growthMultipliers: { ...(this.settings.growthMultipliers || {}), ...(settings.growthMultipliers || {}) }, pumpkinNameFontSize: normalizePumpkinNameFontSize(settings.pumpkinNameFontSize ?? this.settings.pumpkinNameFontSize) };
+    for (const character of this.characters.values()) { character.setNameVisibility(this.settings.showPumpkinNames); character.setNameFontSize(this.settings.pumpkinNameFontSize); character.setAnimationSettings(this.settings.animation); character.setGrowthMultipliers(this.settings.growthMultipliers); character.restartIdle(); }
     if (wasSwaying) this.startTowerSway(participants, payload);
     if (this.towerRoll) this.scheduleTowerRoll();
     return this;

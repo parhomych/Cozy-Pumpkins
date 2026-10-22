@@ -3,7 +3,7 @@ import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { requireAdminSession } from '../auth/session.js';
 import { publicConfig } from '../config.js';
-import { publicPumpkin } from '../engine/donations.js';
+import { publicPumpkin, stageForTotal } from '../engine/donations.js';
 import { normalizeName, normalizeText, finiteNumber } from '../utils/normalize.js';
 import { normalizeZone, isPositionValid, clampPosition, validateParentLink, relocateInvalidPumpkins } from '../engine/spatial-rules.js';
 import { sanitizeCustomization } from '../engine/customization-parser.js';
@@ -12,6 +12,8 @@ import { rewardMappingPatch } from '../engine/rewards.js';
 import { customizationCatalog } from '../engine/customization-parser.js';
 import { validateGrowthThresholds, validateGrowthMultipliers, validateSpawnSettings } from '../engine/donation-settings.js';
 import { towerAnimationPatch } from '../engine/tower-animation.js';
+import { pumpkinNameFontSize } from '../engine/pumpkin-name-settings.js';
+import { validateGrowthStages } from '../engine/growth-stages.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 function safeError(res, error, fallback = 'request_failed') { const code = error?.message && /^[a-z0-9_]+$/i.test(error.message) ? error.message : fallback; return res.status(code.includes('required') ? 401 : 400).json({ error: code }); }
@@ -21,7 +23,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
   router.get('/status', (req, res) => res.json({ ok: true, config: publicConfig(config), integrations: statusesPayload(statuses), devSimulator: config.nodeEnv !== 'production', serverTime: new Date().toISOString() }));
   router.get('/pumpkins', (req, res) => res.json({ pumpkins: db.listPumpkins().map(publicPumpkin) }));
   router.get('/pumpkins/:id', (req, res) => { const pumpkin = db.getPumpkin(req.params.id); return pumpkin ? res.json({ pumpkin: publicPumpkin(pumpkin) }) : res.status(404).json({ error: 'pumpkin_not_found' }); });
-  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthMultipliers: settings.growthMultipliers }, customizationCatalog: customizationCatalog() }); });
+  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers }, customizationCatalog: customizationCatalog() }); });
 
   for (const provider of ['twitch', 'donationalerts', 'donatex', 'memealerts']) {
     router.get(`/auth/${provider}`, requireAdminSession, (req, res) => {
@@ -123,6 +125,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
       if (body.twitchUsername !== undefined) patch.twitchUsername = normalizeName(body.twitchUsername) || null;
       if (body.twitchUserId !== undefined) patch.twitchUserId = body.twitchUserId ? normalizeText(body.twitchUserId, 128) : null;
       if (body.displayName !== undefined) { const name = normalizeText(body.displayName, 128); if (!name) return res.status(400).json({ error: 'invalid_display_name' }); patch.displayName = name; }
+      if (body.showDisplayName !== undefined) { if (typeof body.showDisplayName !== 'boolean') return res.status(400).json({ error: 'invalid_show_display_name' }); patch.showDisplayName = body.showDisplayName; }
       if (body.stage !== undefined) { const stage = finiteNumber(body.stage, { min: 1, max: 4 }); if (!Number.isInteger(stage)) return res.status(400).json({ error: 'invalid_stage' }); patch.stage = stage; }
        if (body.x !== undefined || body.y !== undefined) { const settings = db.getSettings(config); const x = body.x === undefined ? current.x : finiteNumber(body.x); const y = body.y === undefined ? current.y : finiteNumber(body.y); if (x === null || y === null || !isPositionValid({ ...current, ...patch }, x, y, { scene: config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers })) return res.status(400).json({ error: 'invalid_position' }); patch.x = x; patch.y = y; }
       if (body.parentId !== undefined) { const check = validateParentLink(current.id, body.parentId || null, db.listPumpkins()); if (!check.valid) return res.status(400).json({ error: check.reason }); patch.parentId = body.parentId || null; }
@@ -135,9 +138,12 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
     try {
        const body = req.body || {}; const current = db.getSettings(config); const patch = {};
        if (body.growthThresholds !== undefined) patch.growthThresholds = validateGrowthThresholds(body.growthThresholds);
+       if (body.growthStages !== undefined) patch.growthStages = validateGrowthStages(body.growthStages);
        if (body.growthMultipliers !== undefined) patch.growthMultipliers = validateGrowthMultipliers(body.growthMultipliers);
       if (body.noGoZone !== undefined) patch.noGoZone = normalizeZone(body.noGoZone, config.scene);
       if (body.groundY !== undefined) { const groundY = finiteNumber(body.groundY, { min: 0, max: config.scene.height }); if (groundY === null) throw new Error('invalid_ground_y'); patch.groundY = groundY; }
+      if (body.showPumpkinNames !== undefined) { if (typeof body.showPumpkinNames !== 'boolean') throw new Error('invalid_show_pumpkin_names'); patch.showPumpkinNames = body.showPumpkinNames; }
+      if (body.pumpkinNameFontSize !== undefined) { const fontSize = pumpkinNameFontSize(body.pumpkinNameFontSize); if (fontSize === null) throw new Error('invalid_pumpkin_name_font_size'); patch.pumpkinNameFontSize = fontSize; }
       if (body.rewardMapping !== undefined) { const rewardMapping = rewardMappingPatch(body.rewardMapping, current.rewardMapping); if (!rewardMapping) throw new Error('invalid_reward_mapping'); patch.rewardMapping = rewardMapping; }
       Object.assign(patch, validateSpawnSettings(body));
       const animationInput = body.animation !== undefined ? body.animation : (body.eyeFrequency !== undefined || body.mouthFrequency !== undefined ? { eyeFrequency: body.eyeFrequency, mouthFrequency: body.mouthFrequency } : undefined);
@@ -146,16 +152,26 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
       const relocated = [];
       const settings = db.transaction(() => {
         const value = db.updateSettings(patch, config);
-         if (patch.noGoZone || patch.growthMultipliers) {
-           for (const moved of relocateInvalidPumpkins(db.listPumpkins(), { scene: config.scene, noGoZone: value.noGoZone, growthMultipliers: value.growthMultipliers })) {
-            const updated = db.updatePumpkin(moved.id, { x: moved.x, y: moved.y });
-            relocated.push(publicPumpkin(updated));
+        if (patch.noGoZone || patch.growthMultipliers || patch.growthStages || patch.growthThresholds) {
+          const pumpkins = db.listPumpkins();
+          const nextStages = new Map(pumpkins.map((pumpkin) => [pumpkin.id, stageForTotal(pumpkin.totalDonated, value.growthThresholds, value.growthStages)]));
+          const stagedPumpkins = pumpkins.map((pumpkin) => ({ ...pumpkin, stage: nextStages.get(pumpkin.id) }));
+          const movedPositions = new Map(relocateInvalidPumpkins(stagedPumpkins, { scene: config.scene, noGoZone: value.noGoZone, growthMultipliers: value.growthMultipliers }).map((moved) => [moved.id, moved]));
+          for (const current of pumpkins) {
+            const nextStage = nextStages.get(current.id);
+            const pumpkinPatch = { stage: nextStage };
+            const moved = movedPositions.get(current.id);
+            if (moved) Object.assign(pumpkinPatch, { x: moved.x, y: moved.y });
+            if (nextStage !== current.stage || moved) {
+              const updated = db.updatePumpkin(current.id, pumpkinPatch);
+              relocated.push(publicPumpkin(updated));
+            }
           }
         }
         return value;
       });
       for (const pumpkin of relocated) broadcast('pumpkin:updated', { pumpkin });
-       broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthMultipliers: settings.growthMultipliers } });
+       broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers } });
       broadcast('settings:nogo-updated', { noGoZone: settings.noGoZone }); return res.json({ settings });
     } catch (error) { return safeError(res, error); }
   });

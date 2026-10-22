@@ -9,6 +9,7 @@ test('growth settings render four isolated previews and save only valid cumulati
     assert.match(html, new RegExp(`id="growth-stage-${stage}-preview"`));
     assert.match(html, new RegExp(`data-growth-preview-stage="${stage}"`));
   }
+  for (const stage of [2, 3, 4]) assert.match(html, new RegExp(`id="growth-stage-enabled-${stage}"`));
   for (const stage of [2, 3, 4]) assert.match(html, new RegExp(`id="growth-threshold-stage-${stage}"`));
   for (const stage of [1, 2, 3, 4]) assert.match(html, new RegExp(`id="growth-multiplier-stage-${stage}"`));
   assert.match(html, /id="save-growth-settings"/);
@@ -16,6 +17,8 @@ test('growth settings render four isolated previews and save only valid cumulati
   assert.match(source, /function renderGrowthStages\(/);
   assert.match(source, /function saveGrowthSettings\(/);
   assert.match(source, /growthThresholds/);
+  assert.match(source, /growthStages/);
+  assert.match(source, /growth-stage-enabled-/);
   assert.match(source, /growthMultipliers/);
   assert.match(source, /growth-multiplier-stage-/);
   assert.match(source, /invalid_growth_multipliers/);

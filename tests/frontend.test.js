@@ -151,6 +151,32 @@ test('global pumpkin tower actions dispatch, roll to server targets, and clean u
   assert.match(character, /power3\.in/); assert.match(character, /groundY/); assert.match(character, /elastic\.out/);
 });
 
+test('shared scene characters render safe, non-empty donor name labels', async () => {
+  const character = await readFile(new URL('../public/js/shared/pumpkin-character.js', import.meta.url), 'utf8');
+  const renderer = await readFile(new URL('../public/js/shared/pumpkin-renderer.js', import.meta.url), 'utf8');
+  const overlay = await readFile(new URL('../public/js/overlay-app.js', import.meta.url), 'utf8');
+  assert.match(character, /donor-name-label/);
+  assert.match(character, /createElementNS/);
+  assert.match(character, /textContent\s*=/);
+  assert.doesNotMatch(character, /innerHTML/);
+  assert.match(character, /displayName.*trim\(\)/s);
+  assert.match(character, /this\.positioning === 'scene'/);
+  assert.match(character, /this\.data\.showDisplayName !== false/);
+  assert.match(character, /setNameVisibility/);
+  assert.match(character, /font-family', 'Tahoma, sans-serif'/);
+  assert.match(character, /fill', '#fff'/);
+  assert.match(character, /stroke', '#000'/);
+  assert.match(character, /setNameFontSize/);
+  assert.match(character, /Math\.floor\(availableWidth \/ \(this\.pumpkinNameFontSize \* 0\.6\)\)/);
+  assert.match(renderer, /showPumpkinNames/);
+  assert.match(renderer, /showPumpkinNames: true/);
+  assert.match(renderer, /pumpkinNameFontSize: DEFAULT_PUMPKIN_NAME_FONT_SIZE/);
+  assert.match(renderer, /setNameVisibility/);
+  assert.match(renderer, /setNameFontSize/);
+  assert.match(overlay, /renderer\.setSettings\(scene\.settings\s*\|\|\s*\{\}\)/);
+  assert.match(overlay, /settings:updated.*renderer\.setSettings/s);
+});
+
 test('tower lifetime starts after stacking and later activations still roll', () => {
   const originalSetTimeout = globalThis.setTimeout;
   const originalClearTimeout = globalThis.clearTimeout;
@@ -231,6 +257,8 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(html, /data-reward-action="jump_on"/);
   assert.match(html, /id="save-reward-mapping"/);
   assert.match(html, /id="test-pumpkin-tower"/);
+  assert.match(html, /id="pumpkin-name-font-size"/);
+  assert.match(html, /id="pumpkin-name-font-size-value"/);
   for (const id of ['tower-sway-amplitude', 'tower-sway-duration', 'tower-rotation-multiplier', 'tower-bend-multiplier', 'tower-lifetime-min-seconds', 'tower-lifetime-max-seconds', 'tower-stack-order']) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /Fall after \(s\), min/);
   assert.match(html, /Fall after \(s\), max/);
@@ -257,6 +285,7 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(source, /twitch\/rewards/);
   assert.match(source, /Duplicate reward assignment/);
   assert.match(source, /isEnabled/);
+  assert.match(source, /pumpkinNameFontSize/);
   assert.match(source, /value\.authStatus/);
   assert.match(source, /value\.connectionStatus/);
   assert.match(source, /value\.account \|\| '—'/);
