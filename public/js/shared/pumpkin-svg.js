@@ -1,8 +1,11 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const REFERENCE_URL = '/assets/pumpkin-reference.svg';
+const STAGE_ONE_URL = '/assets/pumpkin-stage-1.svg';
+const STAGE_FOUR_URL = '/assets/pumpkin-stage-4.svg';
 const REFERENCE_VIEWBOX = 1095;
 export const REFERENCE_DISPLAY_SIZE = 220;
 export const STAGE_SCALES = Object.freeze([0.58, 0.82, 1, 1.12]);
+export const DEFAULT_GROWTH_MULTIPLIERS = Object.freeze({ stage1: 0.58, stage2: 0.82, stage3: 1, stage4: 1.12 });
 // The supplied reference paths end at approximately this y coordinate; the
 // viewBox has transparent space below them. Anchor the visible artwork, not
 // that transparent viewBox space, to the logical ground point.
@@ -24,6 +27,7 @@ export const DEFAULT_CUSTOMIZATION = { skin: 'classic', eyes: 'cute', mouth: 'ca
 export const CUSTOMIZATION_SLOTS = ['skin', 'eyes', 'mouth', 'hat', 'prop'];
 
 let referenceMarkupPromise;
+let stageOneMarkupPromise;
 
 function node(name, attrs = {}, children = []) {
   const el = document.createElementNS(SVG_NS, name);
@@ -54,6 +58,117 @@ function referenceFallback() {
     x: '0', y: '0', width: String(REFERENCE_VIEWBOX), height: String(REFERENCE_VIEWBOX),
     preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true',
   });
+}
+
+function loadStageOneMarkup() {
+  if (stageOneMarkupPromise) return stageOneMarkupPromise;
+  if (typeof fetch !== 'function') return Promise.resolve(null);
+  stageOneMarkupPromise = fetch(STAGE_ONE_URL, { credentials: 'same-origin' })
+    .then((response) => response.ok ? response.text() : null)
+    .catch(() => null);
+  return stageOneMarkupPromise;
+}
+
+function stageOneArtwork() {
+  const artwork = node('svg', {
+    class: 'stage-one-art', x: '0', y: '0', width: String(REFERENCE_VIEWBOX), height: String(REFERENCE_VIEWBOX),
+    viewBox: '850 80 1100 1380', preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true',
+  });
+  artwork.append(node('image', {
+    class: 'stage-one-art-fallback', href: STAGE_ONE_URL,
+    x: '0', y: '0', width: String(REFERENCE_VIEWBOX), height: String(REFERENCE_VIEWBOX),
+    preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true',
+  }));
+  void loadStageOneMarkup().then((markup) => { if (markup) appendStageOnePaths(markup, artwork); });
+  return artwork;
+}
+
+function stageFourArtwork() {
+  const artwork = node('svg', {
+    class: 'stage-four-art', x: '0', y: '0', width: String(REFERENCE_VIEWBOX), height: String(REFERENCE_VIEWBOX),
+    viewBox: '0 0 961 960', preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true',
+  });
+  artwork.append(node('image', {
+    class: 'stage-four-art-image', href: STAGE_FOUR_URL,
+    x: '0', y: '0', width: '961', height: '960',
+    preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true',
+  }));
+  return artwork;
+}
+
+function isGreenStageOnePath(source) {
+  const fill = source.getAttribute('fill') || '';
+  if (!/^#[0-9a-f]{6}$/iu.test(fill)) return false;
+  const hex = fill.slice(1);
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+  return green > red * 1.08 && green > blue * .95 && green > 70;
+}
+
+function stageOneTranslateX(source) {
+  const match = source.getAttribute('transform')?.match(/translate\(([-0-9.]+),[-0-9.]+\)/u);
+  return match ? Number(match[1]) : 1400;
+}
+
+function stageOneTranslateY(source) {
+  const match = source.getAttribute('transform')?.match(/translate\([-0-9.]+,([-0-9.]+)\)/u);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+}
+
+function stageOnePathBounds(source, probe) {
+  if (!probe) return null;
+  const sample = source.cloneNode(true);
+  probe.append(sample);
+  let bounds = null;
+  try { bounds = sample.getBBox(); } catch {}
+  sample.remove();
+  return bounds;
+}
+
+function isStageOneSproutPath(source, bounds) {
+  if (!isGreenStageOnePath(source) || stageOneTranslateY(source) > 530) return false;
+  if (!bounds) return (source.getAttribute('d') || '').length < 12000;
+  return bounds.width < 400 && bounds.height < 400;
+}
+
+function appendStageOnePaths(markup, artwork) {
+  if (!markup || typeof DOMParser !== 'function') return false;
+  const parsed = new DOMParser().parseFromString(markup, 'image/svg+xml');
+  if (parsed.querySelector('parsererror')) return false;
+  const paths = [...parsed.documentElement.children].filter((element) => element.localName === 'path');
+  if (!paths.length) return false;
+
+  artwork.querySelector('.stage-one-art-fallback')?.remove();
+  const base = group('stage-one-base');
+  const sprout = group('stage-one-sprout');
+  const sproutStem = group('stage-one-sprout-stem');
+  const leavesLeft = group('stage-one-leaves stage-one-leaves-left');
+  const leavesRight = group('stage-one-leaves stage-one-leaves-right');
+  const probe = document.body ? node('svg', { viewBox: '850 80 1100 1380', 'aria-hidden': 'true' }) : null;
+  if (probe) {
+    probe.style.cssText = 'position:absolute;left:-10000px;top:-10000px;width:1px;height:1px;visibility:hidden;pointer-events:none;';
+    document.body.append(probe);
+  }
+  paths.forEach((source) => {
+    const clone = document.importNode ? document.importNode(source, true) : source.cloneNode(true);
+    const bounds = stageOnePathBounds(source, probe);
+    const green = isGreenStageOnePath(source);
+    const sproutPath = isStageOneSproutPath(source, bounds);
+    // The vectorizer includes a large green underpainting silhouette for the
+    // whole character. It sits behind the orange pumpkin in the source SVG,
+    // but would show through as a duplicate when the sprout is separated.
+    if (green && !sproutPath && bounds && (bounds.width >= 400 || bounds.height >= 400)) return;
+    if (!sproutPath) base.append(clone);
+    else if (stageOneTranslateX(source) < 1400) leavesLeft.append(clone);
+    else if (stageOneTranslateX(source) > 1450) leavesRight.append(clone);
+    else sproutStem.append(clone);
+  });
+  probe?.remove();
+  sprout.append(sproutStem, leavesLeft, leavesRight);
+  artwork.append(base, sprout);
+  artwork.dispatchEvent(new CustomEvent('stage-one-art-ready', { bubbles: true }));
+  return true;
 }
 
 function appendReferencePaths(markup, layers) {
@@ -187,15 +302,18 @@ export function createPumpkinSvg(pumpkin = {}) {
     stem: group('stem'),
     highlights: group('highlights highlight-group'),
   };
-  layers.body.append(layers.fallback);
+  if (stage === 1) layers.body.append(stageOneArtwork());
+  else if (stage === 4) layers.body.append(stageFourArtwork());
+  else layers.body.append(layers.fallback);
   const faceMask = group('face-mask face-mask-reference');
   addFaceMask(faceMask);
   // The leaves form a stationary support under the pumpkin. Keep both
   // reference leaf layers outside the animated body stack so idle motion
   // cannot make the pumpkin slide away from its base.
-  leafBed.append(layers.leaves, layers.leavesFront);
-  rocker.append(layers.body, layers.bodyAccent, layers.stem, layers.highlights, faceMask);
-  hydrateReferencePaths(layers);
+  if (stage !== 4) leafBed.append(layers.leaves, layers.leavesFront);
+  rocker.append(layers.body, layers.bodyAccent, layers.stem, layers.highlights);
+  if (stage !== 1) rocker.append(faceMask);
+  if (stage !== 1 && stage !== 4) hydrateReferencePaths(layers);
 
   const face = group(`face face-${customization.mouth}`);
   addFaceOverlay(face, customization);
@@ -213,14 +331,16 @@ export function createPumpkinSvg(pumpkin = {}) {
   else if (customization.prop === 'spider') accessory.append(node('circle', { cx: '51', cy: '196', r: '10', fill: '#24182a' }), path('M43 190 l-17 -12 M43 197 l-20 2 M43 204 l-16 13 M59 190 l17 -12 M59 197 l20 2 M59 204 l16 13', { stroke: '#24182a', 'stroke-width': '3' }));
   else if (customization.prop === 'candle') accessory.append(node('rect', { x: '102', y: '42', width: '16', height: '33', rx: '5', fill: '#f1d49b', stroke: '#7d4c29', 'stroke-width': '3' }));
 
-  rocker.append(face, hat, accessory);
+  if (stage !== 1) rocker.append(face, hat, accessory);
   bodyLook.append(rocker);
   bodyMotion.append(bodyLook);
   actor.append(bodyMotion);
   // Keep the visible artwork anchored inside the root square. Growth scaling
   // belongs to the root layout box; applying it again to these groups makes
   // the visual artwork and the drag hitbox disagree at stages 1 and 4.
-  const stageTransform = `translate(${REFERENCE_VIEWBOX / 2 - REFERENCE_ARTWORK_CENTER_X} ${REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM})`;
+  const stageTransform = stage === 1 || stage === 4
+    ? 'translate(0 0)'
+    : `translate(${REFERENCE_VIEWBOX / 2 - REFERENCE_ARTWORK_CENTER_X} ${REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM})`;
   leafBed.setAttribute('transform', stageTransform);
   actor.setAttribute('transform', stageTransform);
   // The root SVG is the stage-sized logical square. Keep the hitbox in that
@@ -236,3 +356,11 @@ export function createPumpkinSvg(pumpkin = {}) {
 }
 
 export function normalizeCustomization(value = {}) { return mergeCustomization(value); }
+
+export function normalizeGrowthMultipliers(value = {}) {
+  const source = value || {};
+  return Object.fromEntries(Object.keys(DEFAULT_GROWTH_MULTIPLIERS).map((key) => {
+    const number = Number(source[key]);
+    return [key, Number.isFinite(number) && number > 0 ? number : DEFAULT_GROWTH_MULTIPLIERS[key]];
+  }));
+}

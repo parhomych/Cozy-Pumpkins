@@ -1,4 +1,4 @@
-import { createPumpkinSvg, normalizeCustomization, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=hitbox-20261021';
+import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=hitbox-20261021';
 
 const getGsap = () => globalThis.gsap || globalThis.window?.gsap || null;
 const wait = (fn, ms) => setTimeout(fn, ms);
@@ -8,6 +8,9 @@ const SCENE_WIDTH = 1920;
 const SCENE_HEIGHT = 1080;
 const REFERENCE_FACE_ORIGIN = '548 665';
 const REFERENCE_BODY_ORIGIN = '548 1035';
+const STAGE_ONE_SPROUT_ORIGIN = '1400 635';
+const STAGE_ONE_LEFT_LEAF_ORIGIN = '1300 430';
+const STAGE_ONE_RIGHT_LEAF_ORIGIN = '1535 430';
 const BLINK_DELAY_MIN = 9000;
 const BLINK_DELAY_MAX = 18000;
 const ANIMATION_FREQUENCY_MIN = 0.1;
@@ -16,16 +19,22 @@ const DEFAULT_ANIMATION = Object.freeze({ eyeFrequency: 1, mouthFrequency: 1 });
 
 /** One independently animated pumpkin. Positioning lives on .mover; idle body motion is below the inert .floater wrapper. */
 export class PumpkinCharacter {
-  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene', animationSettings = null, previewSize = null } = {}) {
+  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene', animationSettings = null, previewSize = null, growthMultipliers = null } = {}) {
     this.positioning = positioning;
     this.previewSize = Number.isFinite(Number(previewSize)) ? Number(previewSize) : null;
     this.animationSettings = { ...DEFAULT_ANIMATION, ...(animationSettings || {}) };
+    this.growthMultipliers = normalizeGrowthMultipliers(growthMultipliers || {});
     this.data = { ...pumpkin, customization: normalizeCustomization(pumpkin.customization) };
     this.root = createPumpkinSvg(this.data);
     this.root.classList.toggle('is-interactive', interactive);
     this.root.addEventListener('pointerdown', (event) => onPointerDown?.(this.data, event));
 
     this._bindLayers();
+    this.root.addEventListener('stage-one-art-ready', () => {
+      if (this.destroyed || !this.idleStarted) return;
+      this._bindLayers();
+      this._scheduleStageOneCozy();
+    });
     this.x = Number(this.data.x) || 0;
     this.y = Number(this.data.y) || 980;
     this.isAirborne = Boolean(this.data.isAirborne);
@@ -51,6 +60,10 @@ export class PumpkinCharacter {
     this.bodyLook = this.root.querySelector('.body-look');
     this.rocker = this.root.querySelector('.rocker');
     this.body = this.root.querySelector('.body');
+    this.stageOneArt = this.root.querySelector('.stage-one-art');
+    this.stageOneSprout = this.root.querySelector('.stage-one-sprout');
+    this.stageOneLeavesLeft = this.root.querySelector('.stage-one-leaves-left');
+    this.stageOneLeavesRight = this.root.querySelector('.stage-one-leaves-right');
     this.stem = this.root.querySelector('.stem');
     this.faceMask = this.root.querySelector('.face-mask');
     this.face = this.root.querySelector('.face');
@@ -90,6 +103,13 @@ export class PumpkinCharacter {
     return this;
   }
 
+  setGrowthMultipliers(multipliers = {}) {
+    this.growthMultipliers = normalizeGrowthMultipliers(multipliers);
+    this._applyStageGeometry(this.data.stage);
+    this._setPosition(this.x, this.y);
+    return this;
+  }
+
   _track(tween) {
     if (tween) this.tweens.add(tween);
     return tween;
@@ -121,7 +141,7 @@ export class PumpkinCharacter {
   _applyStageGeometry(stage = this.data.stage) {
     const rawStage = Number(stage);
     const normalizedStage = Number.isFinite(rawStage) ? clamp(Math.round(rawStage), 1, STAGE_SCALES.length) : 1;
-    const stageScale = STAGE_SCALES[normalizedStage - 1];
+    const stageScale = this.growthMultipliers[`stage${normalizedStage}`];
     const stageSize = REFERENCE_DISPLAY_SIZE * stageScale;
     this.stage = normalizedStage;
     this.stageScale = stageScale;
@@ -173,12 +193,11 @@ export class PumpkinCharacter {
     }));
   }
 
-  applyCustomization(customization) {
+  _rebuildArtwork(nextData = this.data) {
     const wasIdle = this.idleStarted;
     this.stopIdle();
     this.stopAction();
-    this._kill([this.face, ...this.root.querySelectorAll('.face *')]);
-    this.data.customization = normalizeCustomization(customization);
+    this.data = { ...this.data, ...nextData, customization: normalizeCustomization(nextData.customization || this.data.customization) };
     const next = createPumpkinSvg(this.data);
     next.classList.toggle('is-interactive', this.root.classList.contains('is-interactive'));
     next.classList.toggle('is-selected', this.root.classList.contains('is-selected'));
@@ -191,12 +210,17 @@ export class PumpkinCharacter {
     return this;
   }
 
+  applyCustomization(customization) {
+    return this._rebuildArtwork({ customization });
+  }
+
   startIdle() {
     if (this.destroyed || this.idleStarted) return this;
     this.idleStarted = true;
     // Each channel gets its own initial jitter as well as a fresh jitter on every repeat.
     this._scheduleFloat();
     this._scheduleBodyRock();
+    this._scheduleStageOneCozy();
     this._scheduleStemSway();
     this._scheduleBlink();
     this._scheduleLook();
@@ -249,6 +273,33 @@ export class PumpkinCharacter {
       duration: randomBetween(3.8, 5.4), ease: 'sine.inOut', yoyo: true,
       repeat: -1, overwrite: 'auto', delay: randomBetween(0, 1.6),
     }));
+  }
+
+  _scheduleStageOneCozy() {
+    const gsap = this._gsap();
+    if (this.stage !== 1 || !gsap || !this.stageOneSprout) return;
+    const tilt = randomBetween(2.2, 3.8);
+    this._trackIdle(gsap.fromTo(this.stageOneSprout,
+      { rotation: -tilt, svgOrigin: STAGE_ONE_SPROUT_ORIGIN },
+      {
+        rotation: tilt, svgOrigin: STAGE_ONE_SPROUT_ORIGIN,
+        duration: randomBetween(5.2, 7), ease: 'sine.inOut',
+        yoyo: true, repeat: -1, overwrite: 'auto', delay: randomBetween(0, 1.5),
+      },
+    ));
+    const leafMotion = (target, origin, amount, delay) => {
+      if (!target) return;
+      this._trackIdle(gsap.fromTo(target,
+        { rotation: -amount, svgOrigin: origin },
+        {
+          rotation: amount, svgOrigin: origin,
+          duration: randomBetween(2.8, 4.4), ease: 'sine.inOut',
+          yoyo: true, repeat: -1, overwrite: 'auto', delay,
+        },
+      ));
+    };
+    leafMotion(this.stageOneLeavesLeft, STAGE_ONE_LEFT_LEAF_ORIGIN, randomBetween(2.2, 4), randomBetween(0, .8));
+    leafMotion(this.stageOneLeavesRight, STAGE_ONE_RIGHT_LEAF_ORIGIN, randomBetween(2.2, 4), randomBetween(.3, 1.1));
   }
 
   _scheduleStemSway() {
@@ -307,12 +358,19 @@ export class PumpkinCharacter {
       gsap.set(this.bodyLook, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.rocker || this.body, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.stem, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
-      gsap.set(this.face, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
-      gsap.set(this.eyes, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
-      gsap.set(this.root.querySelectorAll('.eyes .eye'), { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
-      gsap.set(this.root.querySelectorAll('.eyes .eye-glint, .eyes .variant-eye-glint'), { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
-      gsap.set(this.root.querySelectorAll('.eyes .eye-lid'), { opacity: 0 });
-      gsap.set(this.mouth, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.stageOneArt) gsap.set(this.stageOneArt, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.stageOneSprout) gsap.set(this.stageOneSprout, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.stageOneLeavesLeft) gsap.set(this.stageOneLeavesLeft, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.stageOneLeavesRight) gsap.set(this.stageOneLeavesRight, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.face) gsap.set(this.face, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.eyes) gsap.set(this.eyes, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      const eyeParts = this.root.querySelectorAll('.eyes .eye');
+      const eyeGlints = this.root.querySelectorAll('.eyes .eye-glint, .eyes .variant-eye-glint');
+      const eyeLids = this.root.querySelectorAll('.eyes .eye-lid');
+      if (eyeParts.length) gsap.set(eyeParts, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (eyeGlints.length) gsap.set(eyeGlints, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (eyeLids.length) gsap.set(eyeLids, { opacity: 0 });
+      if (this.mouth) gsap.set(this.mouth, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
     }
     this.idleStarted = false;
     return this;
@@ -425,55 +483,11 @@ export class PumpkinCharacter {
     return this;
   }
 
-  jump(targetX = this.x, targetY = this.y, onComplete) {
-    const gsap = this._gsap();
-    if (!gsap) {
-      this.setPositionImmediate(targetX, targetY, false);
-      onComplete?.();
-      return this;
-    }
-    this.stopAction();
-    const position = { x: this.x, y: this.y };
-    const startY = this.y;
-    const tl = gsap.timeline({
-      defaults: { overwrite: 'auto' },
-      onComplete: () => { this._setPosition(targetX, targetY); onComplete?.(); },
-    });
-    tl.to(this.actor, { scaleX: 1.2, scaleY: .8, duration: .18, transformOrigin: 'center bottom', ease: 'power2.in' })
-      .to(position, { x: targetX, y: Math.min(startY, targetY) - 150, duration: .45, ease: 'power2.out', onUpdate: () => this._setPosition(position.x, position.y) }, '<')
-      .to(this.actor, { scaleX: .85, scaleY: 1.25, duration: .22, transformOrigin: 'center bottom' })
-      .to(position, { x: targetX, y: targetY, duration: .55, ease: 'power2.in', onUpdate: () => this._setPosition(position.x, position.y) })
-      .to(this.actor, { scaleX: 1.08, scaleY: .92, duration: .11, transformOrigin: 'center bottom' })
-      .to(this.actor, { scaleX: 1, scaleY: 1, duration: .2, ease: 'elastic.out(1, .45)' });
-    return this._trackAction(tl);
-  }
-
-  inflate(durationSeconds = 5, onPushTrigger) {
-    const gsap = this._gsap();
-    if (!gsap) {
-      onPushTrigger?.();
-      return this;
-    }
-    this.stopAction();
-    const timeline = gsap.timeline({ defaults: { overwrite: 'auto' }, onComplete: () => onPushTrigger?.() });
-    timeline.to(this.actor, { scaleX: 1.3, scaleY: 1.25, duration: .6, transformOrigin: 'center bottom', ease: 'back.out(2)' })
-      .to({}, { duration: Math.max(0, Number(durationSeconds) || 5) })
-      .to(this.actor, { scaleX: 1, scaleY: 1, duration: .6, transformOrigin: 'center bottom', ease: 'elastic.out(1, .5)' });
-    return this._trackAction(timeline);
-  }
-
-  morphAndFly(form, targetX, targetY, groundY = 980) {
-    this.root.dataset.form = form || 'fly';
-    this.root.classList.add('is-flying');
-    return this.jump(targetX, targetY, () => {
-      this.isAirborne = targetY < groundY - 80;
-      this.root.classList.toggle('is-airborne', this.isAirborne);
-      this.root.classList.remove('is-flying');
-    });
-  }
-
   evolve(newStage) {
-    this._applyStageGeometry(newStage);
+    const rawStage = Number(newStage);
+    const normalizedStage = Number.isFinite(rawStage) ? clamp(Math.round(rawStage), 1, STAGE_SCALES.length) : 1;
+    if (normalizedStage !== this.stage) this._rebuildArtwork({ stage: normalizedStage });
+    else this._applyStageGeometry(normalizedStage);
     this._setPosition(this.x, this.y);
     const gsap = this._gsap();
     if (gsap) this._trackAction(gsap.fromTo(this.root, { scale: .7, opacity: .4 }, { scale: 1, opacity: 1, duration: .5, ease: 'back.out(2)', overwrite: 'auto' }));
@@ -486,6 +500,86 @@ export class PumpkinCharacter {
     const gsap = this._gsap();
     if (gsap && this.actor) gsap.set(this.actor, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
     return this;
+  }
+
+  setTowerPose(baseX, baseY, angle = 0, pivotY = baseY, rotationMultiplier = 1) {
+    const lean = Number.isFinite(Number(angle)) ? Number(angle) : 0;
+    const rotation = lean * (Number.isFinite(Number(rotationMultiplier)) ? Number(rotationMultiplier) : 1);
+    const verticalOffset = Math.max(0, Number(pivotY) - Number(baseY));
+    const x = Number(baseX) + Math.sin(lean * Math.PI / 180) * verticalOffset;
+    this._setPosition(x, baseY);
+    const gsap = this._gsap();
+    if (gsap && this.actor) gsap.set(this.actor, { rotation, transformOrigin: '50% 100%' });
+    return this;
+  }
+
+  stack(targetX = this.x, targetY = this.y, index = 0, count = 1, { sway = 3, direction = 0, delay = 0, towerSwayDelay = null, towerSwayDuration = 2.8, coordinated = false, onComplete } = {}) {
+    const gsap = this._gsap();
+    const x = Number.isFinite(Number(targetX)) ? Number(targetX) : this.x;
+    const y = Number.isFinite(Number(targetY)) ? Number(targetY) : this.y;
+    const finish = () => {
+      this.isAirborne = false;
+      this.root.classList.remove('is-airborne');
+      this._setPosition(x, y);
+      this.data = { ...this.data, x, y, isAirborne: false, parentId: null, stackOffsetY: null };
+      onComplete?.();
+    };
+    this.stopAction();
+    if (!gsap) {
+      finish();
+      return this;
+    }
+
+    const position = { x: this.x, y: this.y };
+    const jumpHeight = Math.max(85, (this.stageSize || REFERENCE_DISPLAY_SIZE) * .68);
+    const jumpY = Math.max(this.stageSize || REFERENCE_DISPLAY_SIZE, Math.min(this.y, y) - jumpHeight);
+    const lean = direction ? direction * Math.min(10, 3 + count * .6) : 0;
+    const amplitude = Math.min(24, Math.max(4, Number(sway) || 4));
+    const timeline = gsap.timeline({ delay, defaults: { overwrite: 'auto' }, onComplete: finish });
+    timeline.to(this.actor, { scaleX: 1.1, scaleY: .9, duration: .14, transformOrigin: '50% 100%', ease: 'power2.in' })
+      .to(position, { x, y: jumpY, duration: .34, ease: 'power2.out', onUpdate: () => this._setPosition(position.x, position.y) }, '<')
+      .to(this.actor, { scaleX: .86, scaleY: 1.18, duration: .16, transformOrigin: '50% 100%', ease: 'power1.out' })
+      .to(position, { x, y, duration: .46 + Math.min(.22, index * .03), ease: 'power2.in', onUpdate: () => this._setPosition(position.x, position.y) })
+      .to(this.actor, { scaleX: 1.06, scaleY: .94, duration: .1, transformOrigin: '50% 100%' })
+      .to(this.actor, { scaleX: 1, scaleY: 1, rotation: lean, duration: .18, ease: 'back.out(1.5)' });
+    if (amplitude > 0 && !coordinated) timeline.to(this.actor, { rotation: lean + amplitude * (index % 2 ? -1 : 1), duration: .32, ease: 'sine.inOut', yoyo: true, repeat: 2 });
+    void towerSwayDelay; void towerSwayDuration; void coordinated;
+    return this._trackAction(timeline);
+  }
+
+  rollTo(x, y, data = {}, { direction = 0, delay = 0, groundY = 980, fallDuration = .72, rollDuration = 1.15, onComplete } = {}) {
+    const gsap = this._gsap();
+    const targetX = Number.isFinite(Number(x)) ? Number(x) : this.x;
+    const targetY = Number.isFinite(Number(y)) ? Number(y) : this.y;
+    const finish = () => {
+      this.isAirborne = false;
+      this.root.classList.remove('is-airborne');
+      this._setPosition(targetX, targetY);
+      this.data = { ...this.data, ...data, x: targetX, y: targetY, isAirborne: false, parentId: null, stackOffsetY: null };
+      onComplete?.();
+    };
+    this.stopAction();
+    this.data = { ...this.data, ...data };
+    if (!gsap) {
+      finish();
+      return this;
+    }
+
+    const position = { x: this.x, y: this.y };
+    const distance = Math.abs(targetX - this.x);
+    const spin = (direction < 0 ? -1 : 1) * Math.min(2160, Math.max(540, 540 + distance / Math.max(1, this.stageSize || REFERENCE_DISPLAY_SIZE) * 260));
+    const landingY = Math.max(this.y, Number.isFinite(Number(groundY)) ? Number(groundY) : targetY);
+    const fallX = this.x;
+    const timeline = gsap.timeline({ delay, defaults: { overwrite: 'auto' }, onComplete: finish });
+    timeline.to(this.actor, { scaleX: 1.12, scaleY: .86, duration: .18, transformOrigin: '50% 100%', ease: 'power2.in' })
+      .to(position, { x: fallX, y: landingY, duration: fallDuration, ease: 'power3.in', onUpdate: () => this._setPosition(position.x, position.y) }, '<')
+      .to(this.actor, { scaleX: 1.2, scaleY: .78, duration: .12, ease: 'power2.out' })
+      .to(this.actor, { scaleX: .96, scaleY: 1.04, duration: .28, ease: 'elastic.out(1, .55)' })
+      .to(this.actor, { rotation: spin, duration: rollDuration, ease: 'none' }, '<')
+      .to(position, { x: targetX, y: landingY, duration: rollDuration, ease: 'sine.inOut', onUpdate: () => this._setPosition(position.x, position.y) }, '<')
+      .to(this.actor, { rotation: 0, scaleX: 1.04, scaleY: .96, duration: .16, ease: 'back.out(1.4)' })
+      .to(this.actor, { scaleX: 1, scaleY: 1, duration: .32, ease: 'elastic.out(1, .5)' });
+    return this._trackAction(timeline);
   }
 
   disappear(onComplete) {

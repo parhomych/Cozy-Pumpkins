@@ -56,20 +56,31 @@ test('server serves status and both user-facing HTML pages without leaking secre
     const created = JSON.parse(donation.body).result.pumpkin;
     assert.equal(created.customization.skin, 'witch');
     assert.equal('animation' in created, false);
-    const updated = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ animation: { eyeFrequency: 2.5, mouthFrequency: 0.5 } }) });
+    const testReward = await request(port, '/api/dev/reward', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ action: 'pumpkin_tower' }) });
+     assert.equal(testReward.status, 201);
+     assert.equal(JSON.parse(testReward.body).result.test, true);
+     assert.equal(JSON.parse(testReward.body).result.global, true);
+     const updated = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ animation: { eyeFrequency: 2.5, mouthFrequency: 0.5 } }) });
     assert.equal(updated.status, 200);
-    assert.deepEqual(JSON.parse(updated.body).settings.animation, { eyeFrequency: 2.5, mouthFrequency: 0.5 });
+     assert.deepEqual(JSON.parse(updated.body).settings.animation, { eyeFrequency: 2.5, mouthFrequency: 0.5 });
+     const tower = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ towerAnimation: { swayAmplitude: 24, swayDuration: 3 } }) });
+     assert.equal(tower.status, 200);
+     assert.deepEqual(JSON.parse(tower.body).settings.towerAnimation, { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1, bendMultiplier: 1 });
     const mapping = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ rewardMapping: { inflate: 'reward-inflate', ghost: ' reward-ghost ' } }) });
-    assert.equal(mapping.status, 200);
-    assert.deepEqual(JSON.parse(mapping.body).settings.rewardMapping, { inflate: 'reward-inflate', jump_on: '', morph_fly: '', bat: '', ghost: 'reward-ghost' });
+      assert.equal(mapping.status, 200);
+    assert.deepEqual(JSON.parse(mapping.body).settings.rewardMapping, { inflate: 'reward-inflate', jump_on: '', morph_fly: '', bat: '', ghost: 'reward-ghost', pumpkin_tower: '' });
     const partialMapping = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ rewardMapping: { bat: 'reward-bat' } }) });
-    assert.equal(partialMapping.status, 200);
-    assert.deepEqual(JSON.parse(partialMapping.body).settings.rewardMapping, { inflate: 'reward-inflate', jump_on: '', morph_fly: '', bat: 'reward-bat', ghost: 'reward-ghost' });
+      assert.equal(partialMapping.status, 200);
+    assert.deepEqual(JSON.parse(partialMapping.body).settings.rewardMapping, { inflate: 'reward-inflate', jump_on: '', morph_fly: '', bat: 'reward-bat', ghost: 'reward-ghost', pumpkin_tower: '' });
     const invalidMapping = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ rewardMapping: { jump_on: 42 } }) });
     assert.equal(invalidMapping.status, 400);
     assert.equal(JSON.parse(invalidMapping.body).error, 'invalid_reward_mapping');
     const publicRead = await request(port, '/api/settings');
-    assert.deepEqual(JSON.parse(publicRead.body).settings.animation, { eyeFrequency: 2.5, mouthFrequency: 0.5 });
+     assert.deepEqual(JSON.parse(publicRead.body).settings.animation, { eyeFrequency: 2.5, mouthFrequency: 0.5 });
+     assert.deepEqual(JSON.parse(publicRead.body).settings.towerAnimation, { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1, bendMultiplier: 1 });
+     const invalidTower = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ towerAnimation: { bendMultiplier: 99 } }) });
+     assert.equal(invalidTower.status, 400);
+     assert.equal(JSON.parse(invalidTower.body).error, 'invalid_tower_animation');
     const invalid = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ animation: { eyeFrequency: 0 } }) });
     assert.equal(invalid.status, 400);
     assert.equal(JSON.parse(invalid.body).error, 'invalid_animation');
@@ -162,6 +173,44 @@ test('growth thresholds use configured defaults, persist valid values, and rejec
     }
     const finalRead = await request(port, '/api/settings');
     assert.deepEqual(JSON.parse(finalRead.body).settings.growthThresholds, validThresholds);
+  } finally {
+    runtime.db.close();
+    await new Promise((resolve) => runtime.server.close(resolve));
+  }
+});
+
+test('growth multipliers use configured defaults, persist four valid values, and reject invalid updates', async () => {
+  const config = testConfig();
+  const runtime = createServer({ config, db: new Database(':memory:'), publicDir: null });
+  await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+  const port = runtime.server.address().port;
+  try {
+    const firstRead = await request(port, '/api/settings');
+    const defaults = JSON.parse(firstRead.body);
+    assert.deepEqual(defaults.settings.growthMultipliers, config.growthMultipliers);
+    const cookie = firstRead.headers['set-cookie']?.[0]?.split(';')[0];
+    const validMultipliers = { stage1: 0.5, stage2: 0.8, stage3: 1.15, stage4: 1.4 };
+    const update = await request(port, '/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: JSON.stringify({ growthMultipliers: validMultipliers }),
+    });
+    assert.equal(update.status, 200);
+    assert.deepEqual(JSON.parse(update.body).settings.growthMultipliers, validMultipliers);
+    for (const invalid of [
+      { stage1: 0, stage2: 0.8, stage3: 1.15, stage4: 1.4 },
+      { stage1: -1, stage2: 0.8, stage3: 1.15, stage4: 1.4 },
+      { stage1: 0.5, stage2: 'x', stage3: 1.15, stage4: 1.4 },
+      { stage1: 0.5, stage2: 0.8, stage3: 1.15 },
+    ]) {
+      const response = await request(port, '/api/settings', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ growthMultipliers: invalid }),
+      });
+      assert.equal(response.status, 400);
+    }
+    const finalRead = await request(port, '/api/settings');
+    assert.deepEqual(JSON.parse(finalRead.body).settings.growthMultipliers, validMultipliers);
   } finally {
     runtime.db.close();
     await new Promise((resolve) => runtime.server.close(resolve));

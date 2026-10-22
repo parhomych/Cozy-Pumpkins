@@ -40,6 +40,7 @@ export function loadConfig({ env = process.env, loadDotenv = true } = {}) {
       stage3: numberFromEnv(env, 'STAGE_3_THRESHOLD', 1000, { min: 0 }),
       stage4: numberFromEnv(env, 'STAGE_4_THRESHOLD', 3000, { min: 0 }),
     },
+    growthMultipliers: { stage1: 0.58, stage2: 0.82, stage3: 1, stage4: 1.12 },
     twitch: {
       clientId: env.TWITCH_CLIENT_ID || '',
       clientSecret: env.TWITCH_CLIENT_SECRET || '',
@@ -50,6 +51,7 @@ export function loadConfig({ env = process.env, loadDotenv = true } = {}) {
         morph_fly: env.TWITCH_REWARD_MORPH_FLY_ID || '',
         bat: env.TWITCH_REWARD_BAT_ID || '',
         ghost: env.TWITCH_REWARD_GHOST_ID || '',
+        pumpkin_tower: env.TWITCH_REWARD_PUMPKIN_TOWER_ID || '',
       },
     },
     donationalerts: {
@@ -71,5 +73,5 @@ export function loadConfig({ env = process.env, loadDotenv = true } = {}) {
 }
 
 export function publicConfig(config) {
-  return { scene: config.scene, pumpkinCurrency: config.pumpkinCurrency, thresholds: config.thresholds };
+  return { scene: config.scene, pumpkinCurrency: config.pumpkinCurrency, thresholds: config.thresholds, growthMultipliers: config.growthMultipliers };
 }

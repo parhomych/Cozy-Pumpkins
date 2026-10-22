@@ -3,8 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import BetterSqlite3 from 'better-sqlite3';
 import { DEFAULT_ANIMATION, sanitizeAnimation } from '../engine/animation.js';
-import { validateSpawnSettings } from '../engine/donation-settings.js';
-import { validateGrowthThresholds } from '../engine/donation-settings.js';
+import { validateSpawnSettings, validateGrowthThresholds, validateGrowthMultipliers, DEFAULT_GROWTH_MULTIPLIERS } from '../engine/donation-settings.js';
+import { DEFAULT_TOWER_ANIMATION, sanitizeTowerAnimation } from '../engine/tower-animation.js';
 
 const schemaPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql');
 const DEFAULT_ZONE = { enabled: false, x: 0, y: 0, width: 0, height: 0 };
@@ -38,9 +38,11 @@ export class Database {
       let settingsColumns = new Set(this.sqlite.prepare('PRAGMA table_info(settings)').all().map((column) => column.name));
       const addedSettingsAnimation = !settingsColumns.has('animation_json');
       if (addedSettingsAnimation) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN animation_json TEXT NOT NULL DEFAULT '{"eyeFrequency":1,"mouthFrequency":1}'`);
+      if (!settingsColumns.has('tower_animation_json')) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN tower_animation_json TEXT NOT NULL DEFAULT '{"swayAmplitude":12,"swayDuration":2,"rotationMultiplier":1,"bendMultiplier":1}'`);
       if (!settingsColumns.has('min_spawn_donation')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN min_spawn_donation REAL NOT NULL DEFAULT 0 CHECK(min_spawn_donation >= 0)');
       if (!settingsColumns.has('spawn_command')) this.sqlite.exec("ALTER TABLE settings ADD COLUMN spawn_command TEXT NOT NULL DEFAULT '!тыковка'");
       if (!settingsColumns.has('growth_thresholds_json')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN growth_thresholds_json TEXT');
+      if (!settingsColumns.has('growth_multipliers_json')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN growth_multipliers_json TEXT');
 
       // Older uncommitted builds stored animation on each pumpkin. Preserve the
       // first valid value as the initial scene setting, then remove that column.
@@ -84,28 +86,37 @@ export class Database {
   close() { this.sqlite.close(); }
   transaction(fn) { return this.sqlite.transaction(fn)(); }
 
-  getSettings(defaults = { scene: { groundY: 980 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} }, thresholds: DEFAULT_GROWTH_THRESHOLDS }) {
+  getSettings(defaults = { scene: { groundY: 980 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} }, thresholds: DEFAULT_GROWTH_THRESHOLDS, growthMultipliers: DEFAULT_GROWTH_MULTIPLIERS }) {
     const row = this.sqlite.prepare('SELECT * FROM settings WHERE id = 1').get();
     if (!row) {
-      const value = { groundY: defaults.scene.groundY, noGoZone: { ...DEFAULT_ZONE }, pumpkinCurrency: defaults.pumpkinCurrency, rewardMapping: { ...defaults.twitch.rewardIds }, minSpawnDonation: 0, spawnCommand: '!тыковка', growthThresholds: validateGrowthThresholds(defaults.thresholds || DEFAULT_GROWTH_THRESHOLDS), animation: sanitizeAnimation(this.legacyAnimation, defaults.animation || DEFAULT_ANIMATION) };
-      this.sqlite.prepare(`INSERT INTO settings (id, ground_y, no_go_zone_json, pumpkin_currency, reward_mapping_json, min_spawn_donation, spawn_command, growth_thresholds_json, animation_json, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(value.groundY, JSON.stringify(value.noGoZone), value.pumpkinCurrency, JSON.stringify(value.rewardMapping), value.minSpawnDonation, value.spawnCommand, JSON.stringify(value.growthThresholds), JSON.stringify(value.animation), new Date().toISOString());
+       const value = { groundY: defaults.scene.groundY, noGoZone: { ...DEFAULT_ZONE }, pumpkinCurrency: defaults.pumpkinCurrency, rewardMapping: { ...defaults.twitch.rewardIds }, minSpawnDonation: 0, spawnCommand: '!тыковка', growthThresholds: validateGrowthThresholds(defaults.thresholds || DEFAULT_GROWTH_THRESHOLDS), growthMultipliers: validateGrowthMultipliers(defaults.growthMultipliers || DEFAULT_GROWTH_MULTIPLIERS), animation: sanitizeAnimation(this.legacyAnimation, defaults.animation || DEFAULT_ANIMATION), towerAnimation: sanitizeTowerAnimation(defaults.towerAnimation || DEFAULT_TOWER_ANIMATION) };
+       this.sqlite.prepare(`INSERT INTO settings (id, ground_y, no_go_zone_json, pumpkin_currency, reward_mapping_json, min_spawn_donation, spawn_command, growth_thresholds_json, growth_multipliers_json, animation_json, tower_animation_json, updated_at) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(value.groundY, JSON.stringify(value.noGoZone), value.pumpkinCurrency, JSON.stringify(value.rewardMapping), value.minSpawnDonation, value.spawnCommand, JSON.stringify(value.growthThresholds), JSON.stringify(value.growthMultipliers), JSON.stringify(value.animation), JSON.stringify(value.towerAnimation), new Date().toISOString());
       return value;
     }
     const storedGrowthThresholds = parsed(row.growth_thresholds_json, null);
     const growthThresholds = storedGrowthThresholds === null
       ? validateGrowthThresholds(defaults.thresholds || DEFAULT_GROWTH_THRESHOLDS)
       : validateGrowthThresholds(storedGrowthThresholds);
-    return { groundY: row.ground_y, noGoZone: parsed(row.no_go_zone_json, DEFAULT_ZONE), pumpkinCurrency: row.pumpkin_currency, rewardMapping: parsed(row.reward_mapping_json, {}), minSpawnDonation: row.min_spawn_donation, spawnCommand: row.spawn_command, growthThresholds, animation: sanitizeAnimation(parsed(row.animation_json, DEFAULT_ANIMATION), defaults.animation || DEFAULT_ANIMATION), updatedAt: row.updated_at };
+    const storedGrowthMultipliers = parsed(row.growth_multipliers_json, null);
+    const growthMultipliers = storedGrowthMultipliers === null
+      ? validateGrowthMultipliers(defaults.growthMultipliers || DEFAULT_GROWTH_MULTIPLIERS)
+      : validateGrowthMultipliers(storedGrowthMultipliers);
+    return { groundY: row.ground_y, noGoZone: parsed(row.no_go_zone_json, DEFAULT_ZONE), pumpkinCurrency: row.pumpkin_currency, rewardMapping: parsed(row.reward_mapping_json, {}), minSpawnDonation: row.min_spawn_donation, spawnCommand: row.spawn_command, growthThresholds, growthMultipliers, animation: sanitizeAnimation(parsed(row.animation_json, DEFAULT_ANIMATION), defaults.animation || DEFAULT_ANIMATION), towerAnimation: sanitizeTowerAnimation(parsed(row.tower_animation_json, DEFAULT_TOWER_ANIMATION), defaults.towerAnimation || DEFAULT_TOWER_ANIMATION), updatedAt: row.updated_at };
   }
-  updateSettings(patch, defaults = { scene: { groundY: 980 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} }, thresholds: DEFAULT_GROWTH_THRESHOLDS }) {
+  updateSettings(patch, defaults = { scene: { groundY: 980 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} }, thresholds: DEFAULT_GROWTH_THRESHOLDS, growthMultipliers: DEFAULT_GROWTH_MULTIPLIERS }) {
     const current = this.getSettings(defaults);
     const growthPatch = patch.growthThresholds === undefined ? {} : { growthThresholds: validateGrowthThresholds(patch.growthThresholds) };
-    const next = { ...current, ...patch, ...growthPatch, ...validateSpawnSettings(patch) };
+    const multiplierPatch = patch.growthMultipliers === undefined ? {} : { growthMultipliers: validateGrowthMultipliers(patch.growthMultipliers) };
+    const next = { ...current, ...patch, ...growthPatch, ...multiplierPatch, ...validateSpawnSettings(patch) };
     next.animation = sanitizeAnimation(next.animation, defaults.animation || DEFAULT_ANIMATION);
+    next.towerAnimation = sanitizeTowerAnimation(next.towerAnimation, defaults.towerAnimation || DEFAULT_TOWER_ANIMATION);
     const storedGrowthThresholds = patch.growthThresholds === undefined
       ? this.sqlite.prepare('SELECT growth_thresholds_json FROM settings WHERE id = 1').get()?.growth_thresholds_json ?? null
       : JSON.stringify(next.growthThresholds);
-    this.sqlite.prepare('UPDATE settings SET ground_y = ?, no_go_zone_json = ?, pumpkin_currency = ?, reward_mapping_json = ?, min_spawn_donation = ?, spawn_command = ?, growth_thresholds_json = ?, animation_json = ?, updated_at = ? WHERE id = 1').run(next.groundY, JSON.stringify(next.noGoZone), next.pumpkinCurrency, JSON.stringify(next.rewardMapping), next.minSpawnDonation, next.spawnCommand, storedGrowthThresholds, JSON.stringify(next.animation), new Date().toISOString());
+    const storedGrowthMultipliers = patch.growthMultipliers === undefined
+      ? this.sqlite.prepare('SELECT growth_multipliers_json FROM settings WHERE id = 1').get()?.growth_multipliers_json ?? null
+      : JSON.stringify(next.growthMultipliers);
+    this.sqlite.prepare('UPDATE settings SET ground_y = ?, no_go_zone_json = ?, pumpkin_currency = ?, reward_mapping_json = ?, min_spawn_donation = ?, spawn_command = ?, growth_thresholds_json = ?, growth_multipliers_json = ?, animation_json = ?, tower_animation_json = ?, updated_at = ? WHERE id = 1').run(next.groundY, JSON.stringify(next.noGoZone), next.pumpkinCurrency, JSON.stringify(next.rewardMapping), next.minSpawnDonation, next.spawnCommand, storedGrowthThresholds, storedGrowthMultipliers, JSON.stringify(next.animation), JSON.stringify(next.towerAnimation), new Date().toISOString());
     return this.getSettings(defaults);
   }
 

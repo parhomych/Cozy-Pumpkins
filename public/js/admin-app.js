@@ -7,22 +7,25 @@ const SCENE_WIDTH = 1920;
 const SCENE_HEIGHT = 1080;
 const REFERENCE_ARTWORK_SIZE = 1095;
 const REFERENCE_DISPLAY_SIZE = 220;
-// Mirror the shared renderer's 1095 x 1095 viewBox rendered at 220 logical pixels.
-const STAGE_SCALES = Object.freeze([0.58, 0.82, 1, 1.12]);
 const PUMPKIN_PADDING = 65;
 const DEFAULT_ANIMATION = Object.freeze({ eyeFrequency: 1, mouthFrequency: 1 });
 const DEFAULT_GROWTH_THRESHOLDS = Object.freeze({ stage2: 300, stage3: 1000, stage4: 3000 });
+const DEFAULT_GROWTH_MULTIPLIERS = Object.freeze({ stage1: 0.58, stage2: 0.82, stage3: 1, stage4: 1.12 });
+const GROWTH_MULTIPLIER_MIN = 0.25;
+const GROWTH_MULTIPLIER_MAX = 3;
 const PREVIEW_CUSTOMIZATION = Object.freeze({ skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' });
 const ANIMATION_MIN = 0.1;
 const ANIMATION_MAX = 10;
-const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost']);
+const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1 });
+const TOWER_ANIMATION_LIMITS = Object.freeze({ swayAmplitude: { min: 0, max: 60 }, swayDuration: { min: 0.1, max: 30 }, rotationMultiplier: { min: 0, max: 5 }, bendMultiplier: { min: 0, max: 5 } });
+const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost', 'pumpkin_tower']);
 const DEFAULT_REWARD_MAPPING = Object.freeze(Object.fromEntries(REWARD_ACTIONS.map((action) => [action, ''])));
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const canvas = $('#scene-canvas'); const previewFrame = $('#preview-frame'); const zoneElement = $('#nogo-zone');
 const renderer = new PumpkinRenderer(canvas, { interactive: true, onSelect: (id, pumpkin, event) => { selectPumpkin(id); if (event) beginDrag(id, event); } });
-const state = { pumpkins: new Map(), settings: { groundY: 980, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 }, animation: { ...DEFAULT_ANIMATION }, rewardMapping: { ...DEFAULT_REWARD_MAPPING }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS }, pumpkinCurrency: 'RUB', minSpawnDonation: 0, spawnCommand: '!тыковка' }, customizationCatalog: [], catalogCharacters: [], growthCharacters: [], growthDirty: false, twitchRewards: [], selectedId: null, socket: null, drag: null, zoneDrag: null, settingsSaveTimer: null, previewCharacter: null };
+const state = { pumpkins: new Map(), settings: { groundY: 980, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 }, animation: { ...DEFAULT_ANIMATION }, towerAnimation: { ...DEFAULT_TOWER_ANIMATION }, rewardMapping: { ...DEFAULT_REWARD_MAPPING }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS }, growthMultipliers: { ...DEFAULT_GROWTH_MULTIPLIERS }, pumpkinCurrency: 'RUB', minSpawnDonation: 0, spawnCommand: '!тыковка' }, customizationCatalog: [], catalogCharacters: [], growthCharacters: [], growthDirty: false, twitchRewards: [], selectedId: null, socket: null, drag: null, zoneDrag: null, settingsSaveTimer: null, previewCharacter: null };
 
 function toast(message) { const el = $('#toast'); if (!el) return; el.textContent = message; el.classList.add('visible'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('visible'), 2600); }
 function setSocketState(label, kind = '') { $('#socket-status').textContent = label; const dot = $('#socket-dot'); dot.className = `status-dot ${kind}`; }
@@ -38,6 +41,7 @@ function renderSpawnSettings() { $('#min-spawn-donation').value = state.settings
 function renderGrowthStages({ updateInputs = true } = {}) {
   const currency = state.settings.pumpkinCurrency || 'RUB';
   const thresholds = { ...DEFAULT_GROWTH_THRESHOLDS, ...(state.settings.growthThresholds || {}) };
+  const multipliers = { ...DEFAULT_GROWTH_MULTIPLIERS, ...(state.settings.growthMultipliers || {}) };
   $$('[data-growth-currency]').forEach((element) => { element.textContent = currency; });
   state.growthCharacters.forEach((character) => character.destroy());
   state.growthCharacters = [];
@@ -51,7 +55,7 @@ function renderGrowthStages({ updateInputs = true } = {}) {
       x: 110,
       y: 220,
       customization: PREVIEW_CUSTOMIZATION,
-    }, { interactive: false, positioning: 'local', previewSize: 90, animationSettings: state.settings.animation });
+    }, { interactive: false, positioning: 'local', previewSize: 90, animationSettings: state.settings.animation, growthMultipliers: multipliers });
     character.setPositionImmediate(110, 220, false);
     character.root.setAttribute('aria-hidden', 'true');
     container.append(character.root);
@@ -59,6 +63,7 @@ function renderGrowthStages({ updateInputs = true } = {}) {
   }
   if (updateInputs && !state.growthDirty) {
     for (const stage of [2, 3, 4]) $(`#growth-threshold-stage-${stage}`).value = thresholds[`stage${stage}`];
+    for (const stage of [1, 2, 3, 4]) $(`#growth-multiplier-stage-${stage}`).value = multipliers[`stage${stage}`];
   }
 }
 function renderCustomizationCatalog(catalog = []) {
@@ -119,7 +124,7 @@ function renderCustomizationCatalog(catalog = []) {
   actionHeading.textContent = 'Actions';
   const actionGrid = document.createElement('div');
   actionGrid.className = 'catalog-grid';
-  const actionIds = [...new Set([...REWARD_ACTIONS, ...$$('[data-animation]').map((button) => button.dataset.animation).filter(Boolean)])];
+  const actionIds = [];
   for (const action of actionIds) {
     const option = document.createElement('article');
     option.className = 'catalog-option';
@@ -146,6 +151,7 @@ async function loadSpawnSettings() {
     state.settings = { ...state.settings, ...(body.settings || {}) };
     state.customizationCatalog = body.customizationCatalog || [];
     renderSpawnSettings();
+    renderTowerAnimationSettings();
     renderGrowthStages();
     renderCustomizationCatalog(state.customizationCatalog);
     status.textContent = 'Spawn settings loaded.';
@@ -204,9 +210,31 @@ function readGrowthThresholds() {
   }
   return { stage2: values[0], stage3: values[1], stage4: values[2] };
 }
+function readGrowthMultipliers() {
+  const stages = [1, 2, 3, 4];
+  const inputs = stages.map((stage) => $(`#growth-multiplier-stage-${stage}`));
+  const values = inputs.map((input) => Number(input.value.trim()));
+  const invalid = new Set();
+  for (let index = 0; index < values.length; index += 1) {
+    if (!inputs[index].value.trim() || !Number.isFinite(values[index]) || values[index] < GROWTH_MULTIPLIER_MIN || values[index] > GROWTH_MULTIPLIER_MAX) invalid.add(index);
+  }
+  inputs.forEach((input, index) => {
+    const message = invalid.has(index) ? `Enter a multiplier from ${GROWTH_MULTIPLIER_MIN} to ${GROWTH_MULTIPLIER_MAX}.` : '';
+    input.setCustomValidity(message);
+    if (message) input.setAttribute('aria-invalid', 'true');
+    else input.removeAttribute('aria-invalid');
+  });
+  if (invalid.size) {
+    const fields = [...invalid].map((index) => `stage ${stages[index]}`).join(', ');
+    $('#growth-settings-state').textContent = `Check ${fields}: size multipliers must be between ${GROWTH_MULTIPLIER_MIN} and ${GROWTH_MULTIPLIER_MAX}.`;
+    return null;
+  }
+  return Object.fromEntries(stages.map((stage, index) => [`stage${stage}`, values[index]]));
+}
 async function saveGrowthSettings() {
   const thresholds = readGrowthThresholds();
-  if (!thresholds) return;
+  const multipliers = readGrowthMultipliers();
+  if (!thresholds || !multipliers) return;
   const button = $('#save-growth-settings');
   const status = $('#growth-settings-state');
   button.disabled = true;
@@ -215,11 +243,11 @@ async function saveGrowthSettings() {
     const response = await fetch('/api/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ growthThresholds: thresholds }),
+      body: JSON.stringify({ growthThresholds: thresholds, growthMultipliers: multipliers }),
     });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || 'growth_threshold_save_failed');
-    if (!body.settings?.growthThresholds) throw new Error('growth_threshold_save_failed');
+    if (!body.settings?.growthThresholds || !body.settings?.growthMultipliers) throw new Error('growth_settings_unsupported');
     state.settings = { ...state.settings, ...body.settings };
     state.growthDirty = false;
     renderGrowthStages();
@@ -227,6 +255,10 @@ async function saveGrowthSettings() {
   } catch (error) {
     status.textContent = error.message === 'invalid_growth_thresholds'
       ? 'The server rejected these growth rules. Check that all three amounts increase.'
+      : error.message === 'invalid_growth_multipliers'
+        ? `The server rejected these size multipliers. Use values from ${GROWTH_MULTIPLIER_MIN} to ${GROWTH_MULTIPLIER_MAX}.`
+      : error.message === 'growth_settings_unsupported'
+        ? 'Restart the Cozy Pumpkins server to load the growth multiplier settings update, then try again.'
       : `Unable to save growth rules: ${error.message}`;
   } finally {
     button.disabled = false;
@@ -245,11 +277,12 @@ function setZone(next, { persist = true } = {}) {
   state.settings.noGoZone.width = clamp(Number(state.settings.noGoZone.width) || 0, 0, SCENE_WIDTH - state.settings.noGoZone.x); state.settings.noGoZone.height = clamp(Number(state.settings.noGoZone.height) || 0, 0, SCENE_HEIGHT - state.settings.noGoZone.y);
   renderZone(); if (persist) scheduleSettingsSave();
 }
-function scheduleSettingsSave() { clearTimeout(state.settingsSaveTimer); state.settingsSaveTimer = setTimeout(() => { state.socket?.emit('admin:settings:update', { noGoZone: state.settings.noGoZone, animation: state.settings.animation, rewardMapping: state.settings.rewardMapping }); }, 180); }
+function scheduleSettingsSave() { clearTimeout(state.settingsSaveTimer); state.settingsSaveTimer = setTimeout(() => { state.socket?.emit('admin:settings:update', { noGoZone: state.settings.noGoZone, animation: state.settings.animation, towerAnimation: state.settings.towerAnimation, rewardMapping: state.settings.rewardMapping }); }, 180); }
 function pumpkinDimensions(pumpkin) {
   const rawStage = Number(pumpkin?.stage);
   const stage = Number.isFinite(rawStage) ? clamp(Math.round(rawStage), 1, 4) : 1;
-  const size = REFERENCE_ARTWORK_SIZE * (REFERENCE_DISPLAY_SIZE / REFERENCE_ARTWORK_SIZE) * STAGE_SCALES[stage - 1];
+  const multipliers = { ...DEFAULT_GROWTH_MULTIPLIERS, ...(state.settings.growthMultipliers || {}) };
+  const size = REFERENCE_ARTWORK_SIZE * (REFERENCE_DISPLAY_SIZE / REFERENCE_ARTWORK_SIZE) * multipliers[`stage${stage}`];
   return { width: size, height: size };
 }
 function localSafePosition(p, x, y) {
@@ -280,9 +313,49 @@ function renderInspector() {
   if (!p) { $('#character-preview').replaceChildren(); state.previewCharacter?.destroy(); state.previewCharacter = null; return; }
   $('#owner-name').textContent = displayName(p); $('#total-donated').textContent = `${Number(p.totalDonated || 0).toLocaleString()} ${p.currency || ''}`; $('#display-name').value = p.displayName || ''; $('#twitch-username').value = p.twitchUsername || '';
   const customization = p.customization || {}; for (const select of $$('[data-slot]')) select.value = customization[select.dataset.slot] || select.options[0]?.value;
-  state.previewCharacter?.destroy(); state.previewCharacter = new PumpkinCharacter({ ...p, x: 110, y: 150 }, { interactive: false, positioning: 'local', previewSize: 130, animationSettings: state.settings.animation }); state.previewCharacter.setPositionImmediate(110, 150, false); $('#character-preview').append(state.previewCharacter.root); state.previewCharacter.startIdle();
+  state.previewCharacter?.destroy(); state.previewCharacter = new PumpkinCharacter({ ...p, x: 110, y: 150 }, { interactive: false, positioning: 'local', previewSize: 130, animationSettings: state.settings.animation, growthMultipliers: state.settings.growthMultipliers }); state.previewCharacter.setPositionImmediate(110, 150, false); $('#character-preview').append(state.previewCharacter.root); state.previewCharacter.startIdle();
 }
 function renderAnimationSettings() { const animation = { ...DEFAULT_ANIMATION, ...(state.settings.animation || {}) }; $('#eye-frequency').value = animation.eyeFrequency; $('#mouth-frequency').value = animation.mouthFrequency; renderer.setSettings({ animation }); state.previewCharacter?.setAnimationSettings(animation).restartIdle(); }
+function normalizeTowerAnimation(value = {}, fallback = DEFAULT_TOWER_ANIMATION) {
+  return Object.fromEntries(Object.keys(DEFAULT_TOWER_ANIMATION).map((key) => {
+    const limits = TOWER_ANIMATION_LIMITS[key];
+    const number = Number(value[key]);
+    const safe = Number.isFinite(number) ? number : Number(fallback[key]);
+    return [key, clamp(Number.isFinite(safe) ? safe : DEFAULT_TOWER_ANIMATION[key], limits.min, limits.max)];
+  }));
+}
+function renderTowerAnimationSettings({ apply = true } = {}) {
+  const towerAnimation = normalizeTowerAnimation(state.settings.towerAnimation);
+  state.settings.towerAnimation = towerAnimation;
+  for (const key of Object.keys(DEFAULT_TOWER_ANIMATION)) $(`#tower-${key === 'swayAmplitude' ? 'sway-amplitude' : key === 'swayDuration' ? 'sway-duration' : key === 'rotationMultiplier' ? 'rotation-multiplier' : 'bend-multiplier'}`).value = towerAnimation[key];
+  if (apply) renderer.setSettings({ towerAnimation });
+}
+function readTowerAnimationSettings() {
+  const fields = {
+    swayAmplitude: $('#tower-sway-amplitude'),
+    swayDuration: $('#tower-sway-duration'),
+    rotationMultiplier: $('#tower-rotation-multiplier'),
+    bendMultiplier: $('#tower-bend-multiplier'),
+  };
+  const value = {};
+  const invalid = [];
+  for (const [key, input] of Object.entries(fields)) {
+    const number = Number(input.value.trim()); const limits = TOWER_ANIMATION_LIMITS[key];
+    if (!input.value.trim() || !Number.isFinite(number) || number < limits.min || number > limits.max) invalid.push(key);
+    value[key] = number;
+    input.setCustomValidity(invalid.includes(key) ? `Use a value from ${limits.min} to ${limits.max}.` : '');
+    input.toggleAttribute('aria-invalid', invalid.includes(key));
+  }
+  if (invalid.length) { $('#tower-animation-state').textContent = 'Check the tower animation values.'; return null; }
+  return value;
+}
+function setTowerAnimationSettings(next, { persist = true } = {}) {
+  state.settings.towerAnimation = normalizeTowerAnimation({ ...state.settings.towerAnimation, ...next });
+  renderer.setSettings({ towerAnimation: state.settings.towerAnimation });
+  renderTowerAnimationSettings({ apply: false });
+  $('#tower-animation-state').textContent = 'Tower animation updated live.';
+  if (persist) scheduleSettingsSave();
+}
 function renderRewardMapping() {
   const mapping = { ...DEFAULT_REWARD_MAPPING, ...(state.settings.rewardMapping || {}) };
   for (const action of REWARD_ACTIONS) {
@@ -308,6 +381,20 @@ function saveRewardMapping() {
   const mapping = readRewardMapping(); const ids = Object.values(mapping).filter(Boolean);
   if (new Set(ids).size !== ids.length) { $('#reward-mapping-state').textContent = 'Duplicate reward assignment: each Twitch reward can be assigned to only one action.'; return; }
   state.settings.rewardMapping = { ...DEFAULT_REWARD_MAPPING, ...mapping }; $('#reward-mapping-state').textContent = 'Saving reward mapping…'; scheduleSettingsSave();
+}
+async function testPumpkinTower() {
+  const button = $('#test-pumpkin-tower'); const status = $('#test-reward-state');
+  button.disabled = true; status.textContent = 'Activating test tower…';
+  try {
+    const response = await fetch('/api/dev/reward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'pumpkin_tower' }) });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || 'test_action_failed');
+    status.textContent = body.result?.status === 'no_pumpkins' ? 'No pumpkins are available for the test.' : 'Test tower activation sent.';
+  } catch (error) {
+    status.textContent = error.message === 'development_simulator_disabled' ? 'Test actions are available only in development.' : `Unable to activate test tower: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
 }
 function rewardErrorMessage(code) {
   const messages = {
@@ -372,14 +459,14 @@ function moveZone(event) { const drag = state.zoneDrag; if (!drag) return; const
 }
 function endZone() { if (!state.zoneDrag) return; try { previewFrame.releasePointerCapture(state.zoneDrag.pointerId); } catch {} state.zoneDrag = null; }
 function updateProviderCard(value) { if (!value?.provider) return; const card = document.querySelector(`[data-provider="${value.provider}"]`); if (!card) return; const wasConnected = card.dataset.authenticated === 'true'; const providerNames = { twitch: 'Twitch', donationalerts: 'DonationAlerts', donatex: 'DonatEx', memealerts: 'Meme Alerts' }; const providerName = providerNames[value.provider] || value.provider; const disconnected = 'Disconnected'; $('[data-auth-status]', card).textContent = value.authStatus || disconnected; $('[data-connection-status]', card).textContent = value.connectionStatus || disconnected; $('[data-account]', card).textContent = value.account || '—'; $('[data-provider-message]', card).textContent = value.message || ''; const button = $('.provider-action', card); const connected = value.authStatus === 'Connected'; card.dataset.authenticated = connected ? 'true' : 'false'; button.textContent = `${connected ? 'Disconnect' : 'Connect'} ${providerName}`; button.dataset.connected = connected ? 'true' : 'false'; if (value.provider === 'twitch' && connected && !wasConnected) void loadTwitchRewards(); }
-function handleScene(scene = {}) { state.pumpkins.clear(); state.settings = { ...state.settings, ...(scene.settings || {}), animation: { ...DEFAULT_ANIMATION, ...(scene.settings?.animation || {}) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(scene.settings?.rewardMapping || {}) }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS, ...(scene.settings?.growthThresholds || {}) } }; renderer.setSettings(state.settings); for (const p of scene.pumpkins || []) state.pumpkins.set(p.id, p); renderer.sync([...state.pumpkins.values()]); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages(); renderSearch(); renderInspector(); for (const status of scene.authStatus || []) updateProviderCard(status); }
+  function handleScene(scene = {}) { state.pumpkins.clear(); state.settings = { ...state.settings, ...(scene.settings || {}), animation: { ...DEFAULT_ANIMATION, ...(scene.settings?.animation || {}) }, towerAnimation: { ...DEFAULT_TOWER_ANIMATION, ...(scene.settings?.towerAnimation || {}) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(scene.settings?.rewardMapping || {}) }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS, ...(scene.settings?.growthThresholds || {}) }, growthMultipliers: { ...DEFAULT_GROWTH_MULTIPLIERS, ...(scene.settings?.growthMultipliers || {}) } }; renderer.setSettings(state.settings); for (const p of scene.pumpkins || []) state.pumpkins.set(p.id, p); renderer.sync([...state.pumpkins.values()]); renderZone(); renderAnimationSettings(); renderTowerAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages(); renderSearch(); renderInspector(); for (const status of scene.authStatus || []) updateProviderCard(status); }
 async function providerAction(provider, connected) { const path = `/api/auth/${provider}/${connected ? 'logout' : ''}`.replace(/\/$/, ''); if (!connected) { window.location.assign(`/api/auth/${provider}`); return; } try { const response = await fetch(path, { method: 'POST', headers: { 'Accept': 'application/json' } }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'logout_failed'); toast(`${provider} disconnected locally`); } catch (error) { toast(error.message); } }
 function connectSocket() { if (typeof globalThis.io !== 'function') { setSocketState('Socket.IO unavailable', 'error'); return; } const socket = globalThis.io(); state.socket = socket; socket.on('connect', () => setSocketState('Live', 'live')); socket.on('disconnect', () => { setSocketState('Reconnecting…', 'warn'); if (state.drag) endDrag(); }); socket.on('connect_error', () => setSocketState('Reconnecting…', 'warn')); socket.io?.on('reconnect_attempt', () => setSocketState('Reconnecting…', 'warn'));
-    socket.on('scene:init', handleScene); socket.on('integration:status', updateProviderCard); socket.on('pumpkin:spawned', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:updated', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:move', (payload) => { if (!state.drag || state.drag.id !== payload.id) renderer.applyMove(payload); }); socket.on('pumpkin:move-ended', (payload) => { renderer.finishMove(payload); const p = state.pumpkins.get(payload.id); if (p) state.pumpkins.set(payload.id, { ...p, x: payload.x, y: payload.y }); }); socket.on('pumpkin:evolved', ({ id, stage, totalDonated }) => { const p = state.pumpkins.get(id); if (p) { p.stage = stage; p.totalDonated = totalDonated; upsertPumpkin(p); } }); socket.on('pumpkin:action', (payload) => renderer.action(payload.id, payload.action, payload)); socket.on('pumpkin:deleted', ({ id }) => { removePumpkin(id); renderSearch(); toast('Pumpkin deleted'); }); socket.on('pumpkin:cleared', () => { state.pumpkins.clear(); renderer.clear(); selectPumpkin(null); renderSearch(); toast('Scene cleared'); }); socket.on('settings:updated', ({ settings } = {}) => { state.settings = { ...state.settings, ...(settings || {}), animation: { ...DEFAULT_ANIMATION, ...(settings?.animation || state.settings.animation) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(settings?.rewardMapping || state.settings.rewardMapping) }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS, ...(settings?.growthThresholds || state.settings.growthThresholds) } }; renderer.setSettings(state.settings); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages({ updateInputs: !state.growthDirty }); if (settings?.rewardMapping) $('#reward-mapping-state').textContent = 'Reward mapping saved.'; }); socket.on('settings:nogo-updated', ({ noGoZone }) => { setZone(noGoZone, { persist: false }); }); socket.on('operation:error', ({ message }) => { if (message === 'invalid_reward_mapping') { $('#reward-mapping-state').textContent = 'Invalid reward mapping.'; renderRewardMapping(); } else if (message === 'invalid_min_spawn_donation' || message === 'invalid_spawn_command') $('#spawn-settings-state').textContent = message; else if (message === 'invalid_growth_thresholds') $('#growth-settings-state').textContent = 'The server rejected these growth rules. Check that all three amounts increase.'; toast(message || 'Operation rejected by server'); }); }
+      socket.on('scene:init', handleScene); socket.on('integration:status', updateProviderCard); socket.on('pumpkin:spawned', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:updated', ({ pumpkin }) => { upsertPumpkin(pumpkin); renderSearch(); }); socket.on('pumpkin:move', (payload) => { if (!state.drag || state.drag.id !== payload.id) renderer.applyMove(payload); }); socket.on('pumpkin:move-ended', (payload) => { renderer.finishMove(payload); const p = state.pumpkins.get(payload.id); if (p) state.pumpkins.set(payload.id, { ...p, x: payload.x, y: payload.y }); }); socket.on('pumpkin:evolved', ({ id, stage, totalDonated }) => { const p = state.pumpkins.get(id); if (p) { p.stage = stage; p.totalDonated = totalDonated; upsertPumpkin(p); } }); socket.on('pumpkin:action', (payload = {}) => { for (const p of payload.finalPumpkins || []) if (p?.id) state.pumpkins.set(p.id, p); renderer.action(payload.id, payload.action, payload); renderSearch(); if (state.selectedId && payload.finalPumpkins?.some((p) => p.id === state.selectedId)) renderInspector(); }); socket.on('pumpkin:deleted', ({ id }) => { removePumpkin(id); renderSearch(); toast('Pumpkin deleted'); }); socket.on('pumpkin:cleared', () => { state.pumpkins.clear(); renderer.clear(); selectPumpkin(null); renderSearch(); toast('Scene cleared'); }); socket.on('settings:updated', ({ settings } = {}) => { state.settings = { ...state.settings, ...(settings || {}), animation: { ...DEFAULT_ANIMATION, ...(settings?.animation || state.settings.animation) }, towerAnimation: { ...DEFAULT_TOWER_ANIMATION, ...(settings?.towerAnimation || state.settings.towerAnimation) }, rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(settings?.rewardMapping || state.settings.rewardMapping) }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS, ...(settings?.growthThresholds || state.settings.growthThresholds) }, growthMultipliers: { ...DEFAULT_GROWTH_MULTIPLIERS, ...(settings?.growthMultipliers || state.settings.growthMultipliers) } }; renderer.setSettings(state.settings); renderZone(); renderAnimationSettings(); renderTowerAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages({ updateInputs: !state.growthDirty }); if (settings?.rewardMapping) $('#reward-mapping-state').textContent = 'Reward mapping saved.'; }); socket.on('settings:nogo-updated', ({ noGoZone }) => { setZone(noGoZone, { persist: false }); }); socket.on('operation:error', ({ message }) => { if (message === 'invalid_reward_mapping') { $('#reward-mapping-state').textContent = 'Invalid reward mapping.'; renderRewardMapping(); } else if (message === 'invalid_min_spawn_donation' || message === 'invalid_spawn_command') $('#spawn-settings-state').textContent = message; else if (message === 'invalid_growth_thresholds') $('#growth-settings-state').textContent = 'The server rejected these growth rules. Check that all three amounts increase.'; else if (message === 'invalid_growth_multipliers') $('#growth-settings-state').textContent = `The server rejected these size multipliers. Use values from ${GROWTH_MULTIPLIER_MIN} to ${GROWTH_MULTIPLIER_MAX}.`; else if (message === 'invalid_tower_animation') $('#tower-animation-state').textContent = 'The server rejected these tower animation values.'; toast(message || 'Operation rejected by server'); }); }
 function wireUI() {
   $('#save-spawn-settings').addEventListener('click', saveSpawnSettings);
   $('#save-growth-settings').addEventListener('click', () => void saveGrowthSettings());
-  $$('[id^="growth-threshold-stage-"]').forEach((input) => input.addEventListener('input', () => {
+  $$('[id^="growth-threshold-stage-"], [id^="growth-multiplier-stage-"]').forEach((input) => input.addEventListener('input', () => {
     state.growthDirty = true;
     input.setCustomValidity('');
     input.removeAttribute('aria-invalid');
@@ -390,15 +477,16 @@ function wireUI() {
   zoneElement.addEventListener('pointerdown', beginZone); $$('.resize-handle', zoneElement).forEach((handle) => handle.addEventListener('pointerdown', beginResize)); previewFrame.addEventListener('pointermove', moveZone); previewFrame.addEventListener('pointerup', endZone); previewFrame.addEventListener('pointercancel', endZone);
   $('#toggle-zone').addEventListener('click', () => setZone(zone().enabled ? { enabled: false } : { enabled: true, x: 1420, y: 150, width: 360, height: 300 }));
    $$('#zone-x, #zone-y, #zone-width, #zone-height').forEach((input) => input.addEventListener('input', () => setZone({ [input.id.replace('zone-', '')]: Number(input.value) })));
-    $('#eye-frequency').addEventListener('input', () => setAnimationSettings({ eyeFrequency: $('#eye-frequency').value })); $('#mouth-frequency').addEventListener('input', () => setAnimationSettings({ mouthFrequency: $('#mouth-frequency').value })); $('#save-reward-mapping').addEventListener('click', saveRewardMapping); $('#refresh-twitch-rewards').addEventListener('click', () => void loadTwitchRewards());
+      $('#eye-frequency').addEventListener('input', () => setAnimationSettings({ eyeFrequency: $('#eye-frequency').value })); $('#mouth-frequency').addEventListener('input', () => setAnimationSettings({ mouthFrequency: $('#mouth-frequency').value }));
+   $$('input[id^="tower-"]').forEach((input) => input.addEventListener('input', () => { const values = readTowerAnimationSettings(); if (values) setTowerAnimationSettings(values); }));
+   $('#save-reward-mapping').addEventListener('click', saveRewardMapping); $('#refresh-twitch-rewards').addEventListener('click', () => void loadTwitchRewards()); $('#test-pumpkin-tower').addEventListener('click', () => void testPumpkinTower());
   $$('.provider-action').forEach((button) => button.addEventListener('click', () => providerAction(button.dataset.provider, button.dataset.connected === 'true')));
   $$('#inspector-form [data-slot]').forEach((select) => select.addEventListener('change', () => { const p = selected(); if (!p) return; const customization = { ...p.customization, [select.dataset.slot]: select.value }; patchPumpkin({ customization }, { persist: false }); }));
    $('#save-pumpkin').addEventListener('click', async () => { const p = selected(); if (!p) return; const patch = { displayName: $('#display-name').value.trim(), twitchUsername: $('#twitch-username').value.trim() || null, customization: p.customization }; $('#save-state').textContent = 'Sending changes for server validation…'; patchPumpkin(patch, { persist: false }); try { const response = await fetch(`/api/pumpkins/${encodeURIComponent(p.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }); if (!response.ok) throw new Error('server_rejected_changes'); $('#save-state').textContent = 'Saved by server.'; } catch { $('#save-state').textContent = 'Unable to save changes.'; } });
-  $$('#inspector-form [data-animation]').forEach((button) => button.addEventListener('click', () => { const p = selected(); if (!p) return; state.socket?.emit('admin:animation:test', { id: p.id, action: button.dataset.animation }); if (!state.socket) renderer.action(p.id, button.dataset.animation, {}); }));
   $('#delete-pumpkin').addEventListener('click', () => { const p = selected(); if (!p || !window.confirm(`Delete ${displayName(p)}?`)) return; renderer.characters.get(p.id)?.disappear(); state.socket?.emit('admin:pumpkin:delete', { id: p.id }); });
   $('#clear-all').addEventListener('click', () => { if (!state.pumpkins.size || !window.confirm(`Delete all ${state.pumpkins.size} pumpkins? This cannot be undone.`)) return; state.socket?.emit('admin:pumpkins:clear', { confirmation: true }); });
   $('#simulate-donation').addEventListener('click', async () => { try { const response = await fetch('/api/dev/donation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: `dev-${Date.now()}`, name: $('#sim-name').value, amount: Number($('#sim-amount').value), currency: state.settings.pumpkinCurrency || 'RUB', message: state.settings.spawnCommand || '!тыковка' }) }); if (!response.ok) throw new Error('simulator_unavailable'); toast('Test donation sent'); } catch (error) { toast(error.message); } });
 }
-async function loadStatus() { try { const response = await fetch('/api/status'); const data = await response.json(); for (const item of data.integrations || []) updateProviderCard(item); const exposed = data.devSimulator || data.features?.donationSimulator; if (exposed) $('#simulator').hidden = false; } catch { /* Socket.IO remains the source of live state. */ } }
+async function loadStatus() { try { const response = await fetch('/api/status'); const data = await response.json(); for (const item of data.integrations || []) updateProviderCard(item); const exposed = data.devSimulator || data.features?.donationSimulator; if (exposed) { $('#simulator').hidden = false; $('#test-pumpkin-tower').hidden = false; } } catch { /* Socket.IO remains the source of live state. */ } }
 bindPersistentDisclosures($$('details'));
-wireUI(); connectSocket(); loadStatus(); loadSpawnSettings(); renderZone(); renderAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages();
+wireUI(); connectSocket(); loadStatus(); loadSpawnSettings(); renderZone(); renderAnimationSettings(); renderTowerAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages();

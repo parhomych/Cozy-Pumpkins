@@ -6,7 +6,7 @@ const renderer = new PumpkinRenderer(canvas, { interactive: false });
 let socket = null;
 
 function showConnection(text, visible = true) { if (connectionPill) { connectionPill.textContent = text; connectionPill.classList.toggle('visible', visible); } }
-function handleAction(payload = {}) { if (payload.id && payload.action) renderer.action(payload.id, payload.action, payload); }
+function handleAction(payload = {}) { if (payload.action) renderer.action(payload.id, payload.action, payload); }
 function connect() {
   if (typeof globalThis.io !== 'function') { showConnection('Socket.IO unavailable'); return; }
   socket = globalThis.io({ transports: ['websocket', 'polling'] });

@@ -5,8 +5,8 @@ export const CUSTOMIZATION_ALIASES = {
   skin: { classic: ['classic', 'классика', 'классическая', 'оранжевая'], ghost: ['ghost', 'призрак', 'призрачная'], vampire: ['vampire', 'вампир', 'вампирская'], witch: ['witch', 'ведьма', 'фиолетовая'], gold: ['gold', 'золотая', 'золото'] },
   eyes: { cute: ['cute', 'милые', 'круглые'], sly: ['sly', 'хитрые', 'прищур'], stars: ['stars', 'звёзды', 'звезды', 'звёздные', 'звездные'], sleepy: ['sleepy', 'сонные', 'сонный'], hypno: ['hypno', 'спирали', 'гипноз', 'гипно'] },
   mouth: { cat: ['cat', 'улыбка', 'милый рот', 'кот'], fangs: ['fangs', 'клыки', 'вампирские зубы'], jack: ['jack', 'ухмылка', 'джек', 'тыквенная улыбка'], candy: ['candy', 'конфетка', 'леденец', 'конфета'], o: ['o', 'о', 'удивление', 'удивлённый', 'удивленный'] },
-  hat: { witch: ['witch', 'ведьма', 'шляпа', 'ведьмина шляпа'], halo: ['halo', 'нимб', 'ангел'], horns: ['horns', 'рожки', 'рога', 'дьявол'], cat_ears: ['cat_ears', 'кот', 'ушки', 'кошачьи', 'кошачьи_ушки'], crown: ['crown', 'корона', 'король', 'королева'], leaf: ['leaf', 'листик', 'лист', 'без шляпы'] },
-  prop: { lantern: ['lantern', 'фонарик', 'фонарь'], broom: ['broom', 'метла', 'веник'], cape: ['cape', 'плащ', 'шарф', 'накидка'], spider: ['spider', 'паучок', 'паук', 'паутинка'], candle: ['candle', 'свечка', 'свеча'], none: ['none', 'нет', 'ничего', 'без аксессуара'] },
+  hat: {},
+  prop: {},
 };
 
 const normalizedAliases = Object.fromEntries(Object.entries(CUSTOMIZATION_ALIASES).map(([slot, values]) => [slot, Object.fromEntries(Object.entries(values).flatMap(([value, aliases]) => aliases.map((alias) => [normalizeText(alias).toLocaleLowerCase(), value])))]));

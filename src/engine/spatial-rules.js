@@ -7,17 +7,20 @@ import { finiteNumber } from '../utils/normalize.js';
 export const REFERENCE_ARTWORK_SIZE = 1095;
 export const REFERENCE_DISPLAY_SIZE = 220;
 export const STAGE_SCALES = Object.freeze([0.58, 0.82, 1, 1.12]);
+const DEFAULT_GROWTH_MULTIPLIERS = Object.freeze({ stage1: 0.58, stage2: 0.82, stage3: 1, stage4: 1.12 });
 
-export function dimensionsFor(pumpkin = {}) {
+export function dimensionsFor(pumpkin = {}, context = {}) {
   const rawStage = Number(pumpkin.stage);
   const stage = Number.isFinite(rawStage) ? Math.max(1, Math.min(4, Math.round(rawStage))) : 1;
-  const stageScale = STAGE_SCALES[stage - 1];
-  const size = REFERENCE_ARTWORK_SIZE * (REFERENCE_DISPLAY_SIZE / REFERENCE_ARTWORK_SIZE) * stageScale;
+  const multipliers = context?.growthMultipliers || context || {};
+  const multiplier = Number(multipliers[`stage${stage}`]);
+  const stageScale = Number.isFinite(multiplier) ? multiplier : DEFAULT_GROWTH_MULTIPLIERS[`stage${stage}`];
+  const size = Math.round(REFERENCE_DISPLAY_SIZE * stageScale * 1e6) / 1e6;
   return { width: size, height: size };
 }
 
-function artworkBounds(pumpkin, x = pumpkin.x, y = pumpkin.y) {
-  const size = dimensionsFor(pumpkin);
+function artworkBounds(pumpkin, x = pumpkin.x, y = pumpkin.y, context = {}) {
+  const size = dimensionsFor(pumpkin, context);
   return { left: x - size.width / 2, right: x + size.width / 2, top: y - size.height, bottom: y };
 }
 export function normalizeZone(zone, scene) {
@@ -28,15 +31,16 @@ export function normalizeZone(zone, scene) {
   if (x + width > scene.width || y + height > scene.height) throw new Error('No-Go Zone must fit inside the scene');
   return { enabled: true, x, y, width, height };
 }
-export function pumpkinBounds(pumpkin, x = pumpkin.x, y = pumpkin.y, scene) {
-  const size = dimensionsFor(pumpkin); const padding = scene.padding;
+export function pumpkinBounds(pumpkin, x = pumpkin.x, y = pumpkin.y, scene, context = {}) {
+  const size = dimensionsFor(pumpkin, context); const padding = scene.padding;
   return { left: x - size.width / 2 - padding, right: x + size.width / 2 + padding, top: y - size.height - padding, bottom: y + padding };
 }
 export function rectanglesOverlap(a, b) { return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top; }
-export function isPositionValid(pumpkin, x, y, { scene, noGoZone }) {
+export function isPositionValid(pumpkin, x, y, { scene, noGoZone, growthMultipliers } = {}) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
-  const artwork = artworkBounds(pumpkin, x, y);
-  const bounds = pumpkinBounds(pumpkin, x, y, scene);
+  const context = { growthMultipliers };
+  const artwork = artworkBounds(pumpkin, x, y, context);
+  const bounds = pumpkinBounds(pumpkin, x, y, scene, context);
   // The artwork may meet every scene edge. Keep padding for No-Go Zone
   // protection, but do not turn it into an invisible gap at the widget edge.
   if (artwork.left < 0 || artwork.right > scene.width || artwork.top < 0 || artwork.bottom > scene.height) return false;
@@ -47,7 +51,7 @@ export function isPositionValid(pumpkin, x, y, { scene, noGoZone }) {
   return true;
 }
 export function clampPosition(pumpkin, x, y, context) {
-  const { scene } = context; const size = dimensionsFor(pumpkin); const padding = scene.padding;
+  const { scene } = context; const size = dimensionsFor(pumpkin, context); const padding = scene.padding;
   const minX = size.width / 2; const maxX = scene.width - minX;
   const minY = size.height + padding; const maxY = scene.height;
   let candidate = { x: Math.max(minX, Math.min(maxX, Number(x) || minX)), y: Math.max(minY, Math.min(maxY, Number(y) || maxY)) };
@@ -63,9 +67,9 @@ export function clampPosition(pumpkin, x, y, context) {
   return { x: Math.max(minX, Math.min(maxX, candidate.x)), y: maxY };
 }
 export function findSpawnPosition(pumpkin, pumpkins, context) {
-  const size = dimensionsFor(pumpkin); const y = context.scene.groundY ?? context.scene.height - context.scene.padding; const step = size.width + context.scene.padding;
+  const size = dimensionsFor(pumpkin, context); const y = context.scene.groundY ?? context.scene.height - context.scene.padding; const step = size.width + context.scene.padding;
   for (let x = size.width / 2; x <= context.scene.width - size.width / 2; x += step) {
-    if (isPositionValid(pumpkin, x, y, context) && !pumpkins.some((other) => rectanglesOverlap(artworkBounds(pumpkin, x, y), artworkBounds(other)))) return { x, y };
+    if (isPositionValid(pumpkin, x, y, context) && !pumpkins.some((other) => rectanglesOverlap(artworkBounds(pumpkin, x, y, context), artworkBounds(other, other.x, other.y, context)))) return { x, y };
   }
   return null;
 }

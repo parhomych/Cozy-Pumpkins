@@ -1,6 +1,6 @@
 # Cozy Pumpkins
 
-Cozy Pumpkins is a no-build Node.js OBS Browser Source widget: DonationAlerts, DonatEx, and Meme Alerts donations create and grow customizable pumpkins, Twitch Channel Points can trigger actions, and the local admin panel edits the live 1920×1080 scene.
+Cozy Pumpkins is a no-build Node.js OBS Browser Source widget: DonationAlerts, DonatEx, and Meme Alerts donations create and grow customizable pumpkins, Twitch Channel Points can trigger actions including the global Pumpkin tower, and the local admin panel edits the live 1920×1080 scene.
 
 ## Requirements
 
@@ -17,7 +17,7 @@ cp .env.example .env
 
 For local development, the generated development secrets are sufficient. Register each integration's OAuth application and configure its client ID, client secret, and exact callback URL in `.env`. Credentials and user tokens stay server-side; never paste them into the admin panel or commit them.
 
-After authorizing Twitch, use the Channel Points section in the admin panel to refresh the broadcaster's reward list and assign rewards to Cozy Pumpkins actions. Mappings are saved by Twitch reward ID, so renaming a reward does not change its action. Authorization and the live redemption connection are shown separately: a connected account is not live until the EventSub listener is active.
+After authorizing Twitch, use the Channel Points section in the admin panel to refresh the broadcaster's reward list and assign rewards to Cozy Pumpkins actions, including the global Pumpkin tower. Mappings are saved by Twitch reward ID, so renaming a reward does not change its action. Authorization and the live redemption connection are shown separately: a connected account is not live until the EventSub listener is active.
 
 The default Twitch callback is `http://localhost:3000/api/auth/twitch/callback`; register the exact value of `TWITCH_REDIRECT_URI`. Reward IDs do not need to be copied into `.env` when assigning actions in the admin panel. After a successful OAuth flow, the server starts the EventSub listener automatically; on server restart it attempts to restore the listener from the saved authorization.
 
@@ -49,7 +49,7 @@ npm start
 
 Open `http://localhost:3000/admin.html` for the control panel. Add `http://localhost:3000/overlay.html` as a transparent OBS Browser Source at **1920 × 1080**. The browser files are served directly by Express; there is no frontend build step or CDN dependency.
 
-The development-only donation simulator appears in the admin panel when `NODE_ENV` is not `production`. It exercises the same server-side donation path and deduplication logic as an integration event.
+The development-only donation simulator appears in the admin panel when `NODE_ENV` is not `production`. It exercises the same server-side donation path and deduplication logic as an integration event. The Twitch reward section also exposes a local **Test Pumpkin tower activation** button that runs the global tower animation without Twitch credentials or a real redemption.
 
 ## Test and checks
 
@@ -67,7 +67,7 @@ npm run check
 - The backend validates coordinates against the 1920×1080 scene and No-Go Zone. Drag intermediate positions are broadcast but only the final validated position is persisted.
 - Donation event IDs are unique per provider and Twitch redemption IDs are unique in SQLite, so retries do not repeat effects.
 - Donation totals only accumulate in the scene currency; there is no automatic exchange-rate conversion.
-- Twitch rewards are matched by exact reward ID; the action runs only for the pumpkin linked to the redeeming viewer.
+- Twitch rewards are matched by exact reward ID; ordinary actions run only for the pumpkin linked to the redeeming viewer, while the global Pumpkin tower action intentionally affects every active pumpkin.
 - Twitch logout uses the official revoke endpoint and reports success only after the provider confirms it. DonationAlerts logout is explicitly local unless a documented remote revoke mechanism is verified.
 - OAuth client secrets, access/refresh tokens, and realtime channel tokens are never exposed to browser payloads or normal logs.
 - Offline verification uses mocked provider API, WebSocket, and SignalR responses; `make test` does not require provider credentials or a network connection.

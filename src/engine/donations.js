@@ -46,7 +46,7 @@ export class DonationService {
         result = { duplicate: false, eventId: event.eventId, pumpkin: pumpkin ? publicPumpkin(pumpkin) : null, spawned: false, ignored: true, reason: 'currency_mismatch', currencyApplied: false };
         return;
       }
-      const context = { scene: this.config.scene, noGoZone: settings.noGoZone };
+       const context = { scene: this.config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
       const oldStage = pumpkin?.stage ?? 1;
       let spawned = false;
       if (!pumpkin) {

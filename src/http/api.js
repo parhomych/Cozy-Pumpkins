@@ -10,17 +10,18 @@ import { sanitizeCustomization } from '../engine/customization-parser.js';
 import { animationPatch } from '../engine/animation.js';
 import { rewardMappingPatch } from '../engine/rewards.js';
 import { customizationCatalog } from '../engine/customization-parser.js';
-import { validateGrowthThresholds, validateSpawnSettings } from '../engine/donation-settings.js';
+import { validateGrowthThresholds, validateGrowthMultipliers, validateSpawnSettings } from '../engine/donation-settings.js';
+import { towerAnimationPatch } from '../engine/tower-animation.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 function safeError(res, error, fallback = 'request_failed') { const code = error?.message && /^[a-z0-9_]+$/i.test(error.message) ? error.message : fallback; return res.status(code.includes('required') ? 401 : 400).json({ error: code }); }
 function statusesPayload(statuses) { return statuses.all ? statuses.all() : []; }
-export function createApiRouter({ config, db, statuses, oauth, tokenStore, donations = null, twitchApi = null, twitchEventSub = null, providerEvents = {}, broadcast = () => {}, logger = console, publicDir = path.join(ROOT, 'public') } = {}) {
+export function createApiRouter({ config, db, statuses, oauth, tokenStore, donations = null, rewards = null, twitchApi = null, twitchEventSub = null, providerEvents = {}, broadcast = () => {}, logger = console, publicDir = path.join(ROOT, 'public') } = {}) {
   const router = express.Router(); router.use(express.json({ limit: '64kb' }));
   router.get('/status', (req, res) => res.json({ ok: true, config: publicConfig(config), integrations: statusesPayload(statuses), devSimulator: config.nodeEnv !== 'production', serverTime: new Date().toISOString() }));
   router.get('/pumpkins', (req, res) => res.json({ pumpkins: db.listPumpkins().map(publicPumpkin) }));
   router.get('/pumpkins/:id', (req, res) => { const pumpkin = db.getPumpkin(req.params.id); return pumpkin ? res.json({ pumpkin: publicPumpkin(pumpkin) }) : res.status(404).json({ error: 'pumpkin_not_found' }); });
-  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds }, customizationCatalog: customizationCatalog() }); });
+  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthMultipliers: settings.growthMultipliers }, customizationCatalog: customizationCatalog() }); });
 
   for (const provider of ['twitch', 'donationalerts', 'donatex', 'memealerts']) {
     router.get(`/auth/${provider}`, requireAdminSession, (req, res) => {
@@ -102,6 +103,17 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
       return safeError(res, error, 'invalid_donation_event');
     }
   });
+  router.post('/dev/reward', requireAdminSession, (req, res) => {
+    if (config.nodeEnv === 'production' || !rewards) return res.status(404).json({ error: 'development_simulator_disabled' });
+    const action = normalizeText(req.body?.action, 64);
+    if (action !== 'pumpkin_tower') return res.status(400).json({ error: 'unsupported_dev_action' });
+    try {
+      const result = rewards.testAction(action);
+      return res.status(result.status ? 200 : 201).json({ result });
+    } catch (error) {
+      return safeError(res, error, 'test_action_failed');
+    }
+  });
 
   router.patch('/pumpkins/:id', requireAdminSession, (req, res) => {
     try {
@@ -112,7 +124,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
       if (body.twitchUserId !== undefined) patch.twitchUserId = body.twitchUserId ? normalizeText(body.twitchUserId, 128) : null;
       if (body.displayName !== undefined) { const name = normalizeText(body.displayName, 128); if (!name) return res.status(400).json({ error: 'invalid_display_name' }); patch.displayName = name; }
       if (body.stage !== undefined) { const stage = finiteNumber(body.stage, { min: 1, max: 4 }); if (!Number.isInteger(stage)) return res.status(400).json({ error: 'invalid_stage' }); patch.stage = stage; }
-      if (body.x !== undefined || body.y !== undefined) { const x = body.x === undefined ? current.x : finiteNumber(body.x); const y = body.y === undefined ? current.y : finiteNumber(body.y); if (x === null || y === null || !isPositionValid({ ...current, ...patch }, x, y, { scene: config.scene, noGoZone: db.getSettings(config).noGoZone })) return res.status(400).json({ error: 'invalid_position' }); patch.x = x; patch.y = y; }
+       if (body.x !== undefined || body.y !== undefined) { const settings = db.getSettings(config); const x = body.x === undefined ? current.x : finiteNumber(body.x); const y = body.y === undefined ? current.y : finiteNumber(body.y); if (x === null || y === null || !isPositionValid({ ...current, ...patch }, x, y, { scene: config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers })) return res.status(400).json({ error: 'invalid_position' }); patch.x = x; patch.y = y; }
       if (body.parentId !== undefined) { const check = validateParentLink(current.id, body.parentId || null, db.listPumpkins()); if (!check.valid) return res.status(400).json({ error: check.reason }); patch.parentId = body.parentId || null; }
       const pumpkin = db.updatePumpkin(current.id, patch); broadcast('pumpkin:updated', { pumpkin: publicPumpkin(pumpkin) }); return res.json({ pumpkin: publicPumpkin(pumpkin) });
     } catch (error) { return safeError(res, error); }
@@ -121,19 +133,21 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
   router.delete('/pumpkins', requireAdminSession, (req, res) => { if (req.body?.confirmation !== true) return res.status(400).json({ error: 'confirmation_required' }); db.clearPumpkins(); broadcast('pumpkin:cleared', {}); return res.status(204).end(); });
   router.patch('/settings', requireAdminSession, (req, res) => {
     try {
-      const body = req.body || {}; const current = db.getSettings(config); const patch = {};
-      if (body.growthThresholds !== undefined) patch.growthThresholds = validateGrowthThresholds(body.growthThresholds);
+       const body = req.body || {}; const current = db.getSettings(config); const patch = {};
+       if (body.growthThresholds !== undefined) patch.growthThresholds = validateGrowthThresholds(body.growthThresholds);
+       if (body.growthMultipliers !== undefined) patch.growthMultipliers = validateGrowthMultipliers(body.growthMultipliers);
       if (body.noGoZone !== undefined) patch.noGoZone = normalizeZone(body.noGoZone, config.scene);
       if (body.groundY !== undefined) { const groundY = finiteNumber(body.groundY, { min: 0, max: config.scene.height }); if (groundY === null) throw new Error('invalid_ground_y'); patch.groundY = groundY; }
       if (body.rewardMapping !== undefined) { const rewardMapping = rewardMappingPatch(body.rewardMapping, current.rewardMapping); if (!rewardMapping) throw new Error('invalid_reward_mapping'); patch.rewardMapping = rewardMapping; }
       Object.assign(patch, validateSpawnSettings(body));
       const animationInput = body.animation !== undefined ? body.animation : (body.eyeFrequency !== undefined || body.mouthFrequency !== undefined ? { eyeFrequency: body.eyeFrequency, mouthFrequency: body.mouthFrequency } : undefined);
-      if (animationInput !== undefined) { const animation = animationPatch(animationInput, current.animation); if (!animation) throw new Error('invalid_animation'); patch.animation = animation; }
+       if (animationInput !== undefined) { const animation = animationPatch(animationInput, current.animation); if (!animation) throw new Error('invalid_animation'); patch.animation = animation; }
+       if (body.towerAnimation !== undefined) { const towerAnimation = towerAnimationPatch(body.towerAnimation, current.towerAnimation); if (!towerAnimation) throw new Error('invalid_tower_animation'); patch.towerAnimation = towerAnimation; }
       const relocated = [];
       const settings = db.transaction(() => {
         const value = db.updateSettings(patch, config);
-        if (patch.noGoZone) {
-          for (const moved of relocateInvalidPumpkins(db.listPumpkins(), { scene: config.scene, noGoZone: value.noGoZone })) {
+         if (patch.noGoZone || patch.growthMultipliers) {
+           for (const moved of relocateInvalidPumpkins(db.listPumpkins(), { scene: config.scene, noGoZone: value.noGoZone, growthMultipliers: value.growthMultipliers })) {
             const updated = db.updatePumpkin(moved.id, { x: moved.x, y: moved.y });
             relocated.push(publicPumpkin(updated));
           }
@@ -141,7 +155,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
         return value;
       });
       for (const pumpkin of relocated) broadcast('pumpkin:updated', { pumpkin });
-      broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds } });
+       broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthMultipliers: settings.growthMultipliers } });
       broadcast('settings:nogo-updated', { noGoZone: settings.noGoZone }); return res.json({ settings });
     } catch (error) { return safeError(res, error); }
   });

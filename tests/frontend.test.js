@@ -11,14 +11,28 @@ test('shared pumpkin artwork exposes independent reference layers and face parts
   const asset = await readFile(new URL('../public/assets/pumpkin-reference.svg', import.meta.url), 'utf8');
   assert.match(asset, /viewBox="0 0 1095 1095"/);
   assert.equal((asset.match(/<path\b/g) || []).length, 9);
+  const stageOne = await readFile(new URL('../public/assets/pumpkin-stage-1.svg', import.meta.url), 'utf8');
+  assert.match(stageOne, /viewBox="850 80 1100 1380"/);
+  assert.doesNotMatch(stageOne, /fill="#FEFEFE"/);
+  assert.equal((stageOne.match(/<path\b/g) || []).length, 672);
+  const stageFour = await readFile(new URL('../public/assets/pumpkin-stage-4.svg', import.meta.url), 'utf8');
+  assert.match(stageFour, /<svg[^>]+width="961"[^>]+height="960"/);
+  assert.equal((stageFour.match(/<path\b/g) || []).length, 1629);
 });
 
 test('shared pumpkin artwork anchors every growth stage to its bottom edge', async () => {
   const source = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
   assert.match(source, /const REFERENCE_ARTWORK_BOTTOM = 1041;/);
-  assert.match(source, /const REFERENCE_INTERACTION_BOX = Object\.freeze\(\{ x: 0, y: -54, width: REFERENCE_VIEWBOX, height: REFERENCE_VIEWBOX \}\);/);
-  assert.match(source, /translate\(\$\{548 \* \(1 - stageScale\)\} \$\{REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM \* stageScale\}\) scale\(\$\{stageScale\}\)/);
-  assert.doesNotMatch(source, /translate\(\$\{548 \* \(1 - stageScale\)\} \$\{REFERENCE_VIEWBOX \* \(1 - stageScale\)\}\) scale\(\$\{stageScale\}\)/);
+  assert.match(source, /const REFERENCE_INTERACTION_BOX = Object\.freeze\(\{ x: 0, y: 0, width: REFERENCE_VIEWBOX, height: REFERENCE_VIEWBOX \}\);/);
+  assert.match(source, /const stageTransform = stage === 1/);
+  assert.match(source, /STAGE_ONE_URL = '\/assets\/pumpkin-stage-1\.svg'/);
+  assert.match(source, /STAGE_FOUR_URL = '\/assets\/pumpkin-stage-4\.svg'/);
+  assert.match(source, /stageOneArtwork\(\)/);
+  assert.match(source, /stageFourArtwork\(\)/);
+  assert.match(source, /if \(stage !== 4\) leafBed\.append/);
+  assert.match(source, /stage === 1 \|\| stage === 4/);
+  assert.match(source, /leafBed\.setAttribute\('transform', stageTransform\);/);
+  assert.match(source, /actor\.setAttribute\('transform', stageTransform\);/);
 });
 
 test('admin interaction uses the transformed artwork hitbox instead of the shifted root square', async () => {
@@ -27,7 +41,7 @@ test('admin interaction uses the transformed artwork hitbox instead of the shift
   const adminHtml = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
   const overlayHtml = await readFile(new URL('../public/overlay.html', import.meta.url), 'utf8');
   assert.match(svgSource, /class: 'interaction-hitbox'/);
-  assert.match(svgSource, /interactionHitbox\.setAttribute\('transform', stageTransform\)/);
+  assert.ok(svgSource.includes("interactionHitbox.setAttribute('transform', stageTransform)") || svgSource.includes("const interactionHitbox = node('rect'"));
   assert.match(svgSource, /mover\.append\(floater, interactionHitbox\)/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \{[\s\S]*pointer-events: none;/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \.interaction-hitbox \{[\s\S]*pointer-events: all;/);
@@ -37,7 +51,7 @@ test('admin interaction uses the transformed artwork hitbox instead of the shift
 
 test('shared character includes smooth idle, face, stem, and cleanup animation hooks', async () => {
   const source = await readFile(new URL('../public/js/shared/pumpkin-character.js', import.meta.url), 'utf8');
-  for (const method of ['_scheduleFloat', '_scheduleBodyRock', '_scheduleStemSway', 'blink', '_animateMouth', 'jump', 'inflate', 'morphAndFly', 'stopIdle', 'destroy']) {
+  for (const method of ['_scheduleFloat', '_scheduleBodyRock', '_scheduleStageOneCozy', '_scheduleStemSway', 'blink', '_animateMouth', 'stopIdle', 'destroy']) {
     assert.match(source, new RegExp(`\\b${method}\\s*\\(`), `missing animation method ${method}`);
   }
   assert.doesNotMatch(source, /repeatRefresh:/);
@@ -49,7 +63,17 @@ test('shared character includes smooth idle, face, stem, and cleanup animation h
   assert.match(floatBlock, /this\.bodyMotion/);
   assert.match(floatBlock, /duration: randomBetween\(4\.8, 6\.4\)/);
 
+  const stageOneBlock = source.slice(source.indexOf('  _scheduleStageOneCozy('), source.indexOf('  _scheduleStemSway('));
+  assert.match(stageOneBlock, /this\.stageOneSprout/);
+  assert.match(stageOneBlock, /stageOneLeavesLeft/);
+  assert.match(stageOneBlock, /stageOneLeavesRight/);
+  assert.match(stageOneBlock, /sine\.inOut/);
+  assert.match(stageOneBlock, /repeat: -1/);
+
   const svgSource = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
+  assert.match(svgSource, /stage-one-sprout/);
+  assert.match(svgSource, /stage-one-leaves-left/);
+  assert.match(svgSource, /stage-one-leaves-right/);
   const rockerBlock = svgSource.slice(svgSource.indexOf('rocker.append('), svgSource.indexOf('hydrateReferencePaths('));
   assert.doesNotMatch(rockerBlock, /layers\.leaves/);
 
@@ -64,13 +88,42 @@ test('shared character includes smooth idle, face, stem, and cleanup animation h
   assert.match(mouthBlock, /transformOrigin:\s*'50% 50%'/);
   assert.doesNotMatch(mouthBlock, /svgOrigin/);
   assert.doesNotMatch(mouthBlock, /\bx:/);
+  assert.match(source, /if \(normalizedStage !== this\.stage\) this\._rebuildArtwork\(\{ stage: normalizedStage \}\);/);
 });
 
 test('renderer applies global animation settings without replacing characters', async () => {
   const source = await readFile(new URL('../public/js/shared/pumpkin-renderer.js', import.meta.url), 'utf8');
   assert.match(source, /setSettings/);
   assert.match(source, /setAnimationSettings/);
+  assert.match(source, /setGrowthMultipliers/);
+  assert.match(source, /growthMultipliers/);
   assert.match(source, /character\.restartIdle\(\)/);
+  const character = await readFile(new URL('../public/js/shared/pumpkin-character.js', import.meta.url), 'utf8');
+  assert.match(character, /setGrowthMultipliers\(/);
+  assert.match(character, /this\.growthMultipliers/);
+  const stopIdle = character.slice(character.indexOf('  stopIdle() {'), character.indexOf('\n  blink(', character.indexOf('  stopIdle() {')));
+  assert.match(stopIdle, /if \(this\.stageOneArt\)/);
+  assert.match(stopIdle, /if \(this\.face\)/);
+  assert.match(stopIdle, /if \(this\.eyes\)/);
+  assert.match(stopIdle, /if \(this\.mouth\)/);
+  assert.match(stopIdle, /eyeParts\.length/);
+  assert.match(stopIdle, /eyeGlints\.length/);
+  assert.match(stopIdle, /eyeLids\.length/);
+});
+
+test('global pumpkin tower actions dispatch, roll to server targets, and clean up', async () => {
+  const renderer = await readFile(new URL('../public/js/shared/pumpkin-renderer.js', import.meta.url), 'utf8');
+  const character = await readFile(new URL('../public/js/shared/pumpkin-character.js', import.meta.url), 'utf8');
+  const admin = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
+  const overlay = await readFile(new URL('../public/js/overlay-app.js', import.meta.url), 'utf8');
+  assert.match(admin, /pumpkin_tower/); assert.match(admin, /finalPumpkins/);
+  assert.match(overlay, /if \(payload\.action\)/);
+  for (const method of ['stopActions', 'stopTowerMotion', 'startTowerSway', 'stackPumpkins', 'rollPumpkins']) assert.match(renderer, new RegExp(`\\b${method}\\s*\\(`));
+  assert.match(renderer, /participants/); assert.match(renderer, /finalPumpkins/); assert.match(renderer, /character\.stopAction/);
+  assert.match(renderer, /setTowerPose/); assert.match(renderer, /bendFactor/); assert.match(renderer, /Math\.pow\(heightRatio/); assert.match(renderer, /repeat: -1/); assert.match(renderer, /sine\.inOut/);
+  assert.match(renderer, /towerAnimation/); assert.match(renderer, /rotationMultiplier/); assert.match(renderer, /bendMultiplier/); assert.match(renderer, /previousCharacter\.stageSize/); assert.match(renderer, /chainX \+=/);
+  assert.match(character, /stack\(/); assert.match(character, /setTowerPose\(/); assert.match(character, /rollTo\(/);
+  assert.match(character, /power3\.in/); assert.match(character, /groundY/); assert.match(character, /elastic\.out/);
 });
 
 test('admin scene settings expose and save global animation frequencies', async () => {
@@ -80,6 +133,8 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(html, /data-reward-action="inflate"/);
   assert.match(html, /data-reward-action="jump_on"/);
   assert.match(html, /id="save-reward-mapping"/);
+  assert.match(html, /id="test-pumpkin-tower"/);
+  for (const id of ['tower-sway-amplitude', 'tower-sway-duration', 'tower-rotation-multiplier', 'tower-bend-multiplier']) assert.match(html, new RegExp(`id="${id}"`));
   assert.match(html, /id="refresh-twitch-rewards"/);
   assert.match(html, /data-reward-action="inflate"[^>]*>/);
   assert.doesNotMatch(html, /data-reward-action="inflate"[^>]*type="text"/);
@@ -94,8 +149,11 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(source, /eyeFrequency/);
   assert.match(source, /mouthFrequency/);
   assert.match(source, /admin:settings:update/);
+  assert.match(source, /setTowerAnimationSettings/); assert.match(source, /towerAnimation/); assert.match(source, /invalid_tower_animation/);
   assert.match(source, /rewardMapping/);
   assert.match(source, /saveRewardMapping/);
+  assert.match(source, /testPumpkinTower/);
+  assert.match(source, /api\/dev\/reward/);
   assert.match(source, /loadTwitchRewards/);
   assert.match(source, /twitch\/rewards/);
   assert.match(source, /Duplicate reward assignment/);

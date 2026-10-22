@@ -10,20 +10,22 @@ import { clampPosition, dimensionsFor, isPositionValid } from '../src/engine/spa
 import { testConfig, testDatabase } from './helpers.js';
 import { Database } from '../src/db/database.js';
 import { DEFAULT_ANIMATION, ANIMATION_LIMITS, animationPatch, sanitizeAnimation } from '../src/engine/animation.js';
+import { DEFAULT_TOWER_ANIMATION, towerAnimationPatch } from '../src/engine/tower-animation.js';
 import { attachSocketHandlers } from '../src/socket/handlers.js';
 import { OAuthAdapters } from '../src/auth/oauth-adapters.js';
 import { rewardMappingPatch, sanitizeRewardMapping } from '../src/engine/rewards.js';
+import { buildTowerPlan } from '../src/engine/pumpkin-tower.js';
 
 test('customization parser accepts the documented command and ignores unknown words', () => {
   const parsed = parseCustomization('  !ТЫКОВКА ведьма рожки хитрые клыки метла неизвестно');
   assert.equal(parsed.commandDetected, true);
-  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'sly', mouth: 'fangs', hat: 'horns', prop: 'broom' });
+  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'sly', mouth: 'fangs', hat: 'leaf', prop: 'none' });
 });
 
 test('customization parser recognizes the configured command prefix only', () => {
   const parsed = parseCustomization('  !Pumpkin witch stars метла extra', undefined, '!pumpkin');
   assert.equal(parsed.commandDetected, true);
-  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'stars', mouth: 'cat', hat: 'witch', prop: 'broom' });
+  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'stars', mouth: 'cat', hat: 'leaf', prop: 'none' });
   assert.equal(parseCustomization('!pumpkinExtra witch', undefined, '!pumpkin').commandDetected, false);
   assert.equal(parseCustomization('!тыковка witch', undefined, '!pumpkin').commandDetected, false);
 });
@@ -35,8 +37,8 @@ test('customization catalog exposes canonical values and aliases for supported s
     assert.deepEqual(group.values.map(({ value }) => value), customizationValues()[group.slot]);
     assert.ok(group.values.every(({ value, keywords }) => keywords.includes(value)));
   }
-  const props = catalog.find(({ slot }) => slot === 'prop');
-  assert.ok(props.values.some(({ value, keywords }) => value === 'lantern' && keywords.includes('фонарь')));
+  assert.deepEqual(catalog.find(({ slot }) => slot === 'hat').values, []);
+  assert.deepEqual(catalog.find(({ slot }) => slot === 'prop').values, []);
 });
 
 test('OAuth authorization URLs use the server API callback routes', () => {
@@ -182,7 +184,7 @@ test('donation spawn gates and provider identities preserve legacy owners and de
   const created = service.handle({ ...donor, id: 'shared-event-id', amount: 100, message: '  !SPAWN witch рожки' });
   assert.equal(created.spawned, true);
   assert.equal(created.pumpkin.customization.skin, 'witch');
-  assert.equal(created.pumpkin.customization.hat, 'horns');
+  assert.equal(created.pumpkin.customization.hat, 'leaf');
   assert.equal(service.handle({ ...donor, id: 'shared-event-id', amount: 100, message: '!spawn ghost' }).duplicate, true);
   const existingOwner = service.handle({ ...donor, id: 'existing-owner', amount: 25, message: '' });
   assert.equal(existingOwner.spawned, false);
@@ -269,6 +271,18 @@ test('animation settings sanitize partial updates and reject non-finite or out-o
   assert.equal(animationPatch({}), null);
 });
 
+test('tower animation settings persist, merge partial updates, and reject unsafe values', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  assert.deepEqual(db.getSettings(config).towerAnimation, DEFAULT_TOWER_ANIMATION);
+  assert.deepEqual(towerAnimationPatch({ swayAmplitude: 24 }, DEFAULT_TOWER_ANIMATION), { ...DEFAULT_TOWER_ANIMATION, swayAmplitude: 24 });
+  assert.equal(towerAnimationPatch({ swayDuration: Infinity }), null);
+  assert.equal(towerAnimationPatch({ rotationMultiplier: -1 }), null);
+  db.updateSettings({ towerAnimation: { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1.5, bendMultiplier: 0.8 } }, config);
+  assert.deepEqual(db.getSettings(config).towerAnimation, { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1.5, bendMultiplier: 0.8 });
+  db.close();
+});
+
 test('reward mapping sanitizer accepts supported actions and merges partial updates', () => {
   assert.deepEqual(sanitizeRewardMapping({ inflate: ' reward-1 ', ghost: 'reward-2', unknown: 'ignored' }), { inflate: 'reward-1', ghost: 'reward-2' });
   assert.deepEqual(rewardMappingPatch({ bat: 'reward-3' }, { inflate: 'reward-1' }), { inflate: 'reward-1', bat: 'reward-3' });
@@ -292,9 +306,14 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   attachSocketHandlers(io, { config, db, statuses: { all: () => [] } });
   const socket = { data: { admin: true }, handshake: { headers: {} }, on(event, handler) { socketEvents.set(event, handler); }, emit(...args) { ioEvents.push(['socket', ...args]); } };
   connection(socket);
-  socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 2.5 } });
+   socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 2.5 } });
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
-  assert.deepEqual(ioEvents.at(-1)[1].settings.animation, { eyeFrequency: 2.5, mouthFrequency: 3 });
+   assert.deepEqual(ioEvents.at(-1)[1].settings.animation, { eyeFrequency: 2.5, mouthFrequency: 3 });
+   socketEvents.get('admin:settings:update')({ towerAnimation: { rotationMultiplier: 1.5 } });
+   assert.deepEqual(ioEvents.at(-1)[1].settings.towerAnimation, { swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1.5, bendMultiplier: 1 });
+   assert.equal(db.getSettings(config).towerAnimation.rotationMultiplier, 1.5);
+   socketEvents.get('admin:settings:update')({ towerAnimation: { bendMultiplier: 99 } });
+   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_tower_animation' }]);
   socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 0 } });
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_animation' }]);
   socketEvents.get('admin:settings:update')({ rewardMapping: { inflate: 'reward-inflate' } });
@@ -306,6 +325,13 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
   assert.deepEqual(ioEvents.at(-1)[1].settings.growthThresholds, growthThresholds);
   assert.deepEqual(db.getSettings(config).growthThresholds, growthThresholds);
+  const growthMultipliers = { stage1: 0.5, stage2: 0.8, stage3: 1.15, stage4: 1.4 };
+  socketEvents.get('admin:settings:update')({ growthMultipliers });
+  assert.equal(ioEvents.at(-1)[0], 'settings:updated');
+  assert.deepEqual(ioEvents.at(-1)[1].settings.growthMultipliers, growthMultipliers);
+  assert.deepEqual(db.getSettings(config).growthMultipliers, growthMultipliers);
+  socketEvents.get('admin:settings:update')({ growthMultipliers: { stage1: 0, stage2: 0.8, stage3: 1.15, stage4: 1.4 } });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_growth_multipliers' }]);
   socketEvents.get('admin:settings:update')({ growthThresholds: { stage2: 500, stage3: 500, stage4: 3000 } });
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_growth_thresholds' }]);
   assert.deepEqual(db.getSettings(config).growthThresholds, growthThresholds);
@@ -326,6 +352,16 @@ test('spatial bounds follow the square reference artwork stage scale at scene ed
   assert.equal(isPositionValid(pumpkin, edgeX - 0.01, config.scene.groundY, context), false);
   assert.equal(isPositionValid(pumpkin, config.scene.width - edgeX, config.scene.groundY, context), true);
   assert.equal(isPositionValid(pumpkin, config.scene.width - edgeX + 0.01, config.scene.groundY, context), false);
+});
+
+test('spatial dimensions use configured per-stage multipliers', () => {
+  const multipliers = { stage1: 0.5, stage2: 0.8, stage3: 1.15, stage4: 1.4 };
+  const stage1 = dimensionsFor({ stage: 1 }, multipliers);
+  const stage3 = dimensionsFor({ stage: 3 }, multipliers);
+  assert.equal(stage1.width, 110);
+  assert.equal(stage1.height, 110);
+  assert.equal(stage3.width, 253);
+  assert.equal(stage3.height, 253);
 });
 
 test('all growth stages can rest on the lower scene boundary', () => {
@@ -389,6 +425,78 @@ test('redemptions match exact reward IDs and resolve the Twitch user ID before l
   assert.deepEqual(db.listPumpkins().map(({ id, x, y }) => ({ id, x, y })), positions);
   assert.equal(service.handle({ id: 'redemption-wrong-id', rewardId: 'same-title-different-id', userId: 'twitch-1', userLogin: 'viewer-one' }).status, 'ignored_reward');
   assert.deepEqual(db.listPumpkins().map(({ id, x, y }) => ({ id, x, y })), positions);
+  db.close();
+});
+
+test('pumpkin_tower maps by reward ID, affects every pumpkin without a linked redeemer, and deduplicates', () => {
+  const config = testConfig({ TWITCH_REWARD_PUMPKIN_TOWER_ID: 'tower-reward' });
+  const db = testDatabase(config);
+  const donations = new DonationService({ db, config, idFactory: (() => { let id = 0; return () => `tower-pumpkin-${++id}`; })() });
+  for (let index = 0; index < 3; index += 1) donations.handle({ id: `tower-donation-${index}`, name: `Viewer ${index}`, amount: 100, currency: 'RUB', message: '!тыковка' });
+  db.updateSettings({ rewardMapping: { pumpkin_tower: 'tower-reward' }, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 } }, config);
+  const events = [];
+  const rewards = new RewardService({ db, config, random: () => 1, emit: (event, payload) => events.push([event, payload]) });
+  const result = rewards.handle({ id: 'tower-redemption', rewardId: 'tower-reward', userId: 'unlinked', userLogin: 'unlinked' });
+  assert.equal(result.action, 'pumpkin_tower');
+  assert.equal(result.payload.mode, 'tower');
+  assert.equal(result.updatedPumpkins.length, 3);
+  assert.equal(result.payload.finalPumpkins.length, 3);
+  assert.equal(rewards.handle({ id: 'tower-redemption', rewardId: 'tower-reward', userId: 'unlinked', userLogin: 'unlinked' }).duplicate, true);
+  assert.equal(events.filter(([event]) => event === 'pumpkin:updated').length, 0);
+  assert.equal(events.filter(([event]) => event === 'pumpkin:action').length, 1);
+  for (const pumpkin of db.listPumpkins()) assert.equal(isPositionValid(pumpkin, pumpkin.x, pumpkin.y, { scene: config.scene, noGoZone: { enabled: false } }), true);
+  db.close();
+});
+
+test('pumpkin_tower forced topple emits safe unique bottom targets and clears parent links', () => {
+  const config = testConfig({ TWITCH_REWARD_PUMPKIN_TOWER_ID: 'tower-reward' });
+  const db = testDatabase(config);
+  const donations = new DonationService({ db, config, idFactory: (() => { let id = 0; return () => `topple-pumpkin-${++id}`; })() });
+  for (let index = 0; index < 3; index += 1) donations.handle({ id: `topple-donation-${index}`, name: `Topple ${index}`, amount: 100, currency: 'RUB', message: '!тыковка' });
+  db.updatePumpkin('topple-pumpkin-2', { parentId: 'topple-pumpkin-1', stackOffsetY: -220 });
+  db.updateSettings({ rewardMapping: { pumpkin_tower: 'tower-reward' } }, config);
+  const rewards = new RewardService({ db, config, random: () => 0 });
+  const result = rewards.handle({ id: 'forced-topple', rewardId: 'tower-reward', userId: 'nobody', userLogin: 'nobody' });
+  assert.equal(result.payload.mode, 'topple');
+  assert.equal(result.payload.groundY, config.scene.groundY);
+  assert.equal(new Set(result.payload.finalPositions.map(({ x }) => x)).size, 3);
+  for (const target of result.payload.finalPositions) {
+    const pumpkin = db.getPumpkin(target.id);
+    assert.deepEqual({ x: pumpkin.x, y: pumpkin.y }, { x: target.x, y: target.y });
+    assert.equal(pumpkin.parentId, null);
+    assert.equal(isPositionValid(pumpkin, pumpkin.x, pumpkin.y, { scene: config.scene, noGoZone: { enabled: false } }), true);
+  }
+  db.close();
+});
+
+test('tower planning chooses the freer side and refuses an impossible No-Go Zone without partial targets', () => {
+  const config = testConfig();
+  const pumpkins = [1, 2, 3].map((index) => ({ id: `plan-${index}`, createdAt: `2026-01-0${index}`, stage: 1, x: index * 200, y: config.scene.groundY }));
+  const context = { scene: config.scene, noGoZone: { enabled: true, x: 1200, y: 0, width: 720, height: 1080 } };
+  const plan = buildTowerPlan(pumpkins, context, () => 0);
+  assert.equal(plan.direction, 'left');
+  assert.ok(plan.finalPositions.every(({ x, y }, index) => {
+    const pumpkin = pumpkins[index];
+    return isPositionValid(pumpkin, x, y, context);
+  }));
+  assert.equal(buildTowerPlan(pumpkins, { scene: config.scene, noGoZone: { enabled: true, x: 0, y: 0, width: config.scene.width, height: config.scene.height } }, () => 0), null);
+});
+
+test('development pumpkin_tower test action triggers the real global animation without Twitch mapping', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const donations = new DonationService({ db, config, idFactory: (() => { let id = 0; return () => `dev-tower-pumpkin-${++id}`; })() });
+  donations.handle({ id: 'dev-tower-donation-1', name: 'Dev Viewer 1', amount: 100, currency: 'RUB', message: '!тыковка' });
+  donations.handle({ id: 'dev-tower-donation-2', name: 'Dev Viewer 2', amount: 100, currency: 'RUB', message: '!тыковка' });
+  const events = [];
+  const rewards = new RewardService({ db, config, random: () => 1, emit: (event, payload) => events.push([event, payload]) });
+  const result = rewards.testAction('pumpkin_tower');
+  assert.equal(result.test, true);
+  assert.equal(result.global, true);
+  assert.equal(result.payload.test, true);
+  assert.equal(result.finalPumpkins, undefined);
+  assert.equal(events.filter(([event]) => event === 'pumpkin:action').length, 1);
+  assert.equal(db.sqlite.prepare('SELECT COUNT(*) AS count FROM redemptions').get().count, 0);
   db.close();
 });
 

@@ -49,7 +49,7 @@ export function createApp({ config = loadConfig(), db = null, logger = createLog
     memealerts: new MemeAlertsEvents({ ...providerEventFactories.memealerts, oauth, tokenStore, statuses, onDonation: (event) => donations.handle(event), fetchImpl, websocket: WebSocketImpl, logger }),
   };
   app.locals.cozyPumpkins = { config, db: database, tokenStore, statuses, oauth, donations, rewards, twitchApi, twitchEventSub, providerEvents, broadcast, setBroadcast: (fn) => { broadcaster.current = fn; } };
-  app.use('/api', createApiRouter({ config, db: database, statuses, oauth, tokenStore, donations, twitchApi, twitchEventSub, providerEvents, broadcast, logger, publicDir: null }));
+  app.use('/api', createApiRouter({ config, db: database, statuses, oauth, tokenStore, donations, rewards, twitchApi, twitchEventSub, providerEvents, broadcast, logger, publicDir: null }));
   if (publicDir) app.use(express.static(publicDir, { index: false }));
   app.use((error, req, res, next) => { if (error?.type === 'entity.too.large') return res.status(413).json({ error: 'payload_too_large' }); if (res.headersSent) return next(error); logger.error('Unhandled HTTP error', { reason: error?.message }); return res.status(500).json({ error: 'internal_error' }); });
   if (io) { broadcaster.current = (event, payload) => io.emit(event, payload); attachSocketHandlers(io, { config, db: database, statuses, logger }); }

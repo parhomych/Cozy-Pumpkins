@@ -1,8 +1,8 @@
 import { normalizeName, normalizeText, safeId } from '../utils/normalize.js';
-import { dimensionsFor, isPositionValid, clampPosition, validateParentLink } from './spatial-rules.js';
 import { publicPumpkin } from './donations.js';
+import { buildTowerPlan } from './pumpkin-tower.js';
 
-export const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost']);
+export const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost', 'pumpkin_tower']);
 
 // Returns a complete, safe mapping patch. Unknown action keys are ignored for
 // forwards compatibility; empty IDs remain valid to preserve disabled mappings.
@@ -41,41 +41,67 @@ export class RewardService {
   handle(raw) {
     const event = parseRedemption(raw); const now = new Date().toISOString(); let result;
     this.db.transaction(() => {
-      const action = mappedAction(event.rewardId, this.db.getSettings(this.config).rewardMapping);
+      const settings = this.db.getSettings(this.config);
+      const action = mappedAction(event.rewardId, settings.rewardMapping);
       if (!this.db.insertRedemption({ ...event, status: action || 'ignored_reward', receivedAt: now, processedAt: now })) { result = { duplicate: true, redemptionId: event.redemptionId }; return; }
+      if (!action) { result = { duplicate: false, redemptionId: event.redemptionId, status: 'ignored_reward' }; return; }
+      if (action === 'pumpkin_tower') {
+        result = this._runPumpkinTower(settings, { redemptionId: event.redemptionId });
+        return;
+      }
       const pumpkin = this.db.findPumpkinByTwitch(event.userId, event.userLogin);
       if (!pumpkin) { result = { duplicate: false, redemptionId: event.redemptionId, status: 'no_pumpkin_for_user', action }; return; }
-      const settings = this.db.getSettings(this.config); const context = { scene: this.config.scene, noGoZone: settings.noGoZone };
-      if (!action) { result = { duplicate: false, redemptionId: event.redemptionId, status: 'ignored_reward', pumpkin: publicPumpkin(pumpkin) }; return; }
+       const context = { scene: this.config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
       result = this.applyAction(action, pumpkin, event.input, context);
     });
-    if (result.duplicate || result.status === 'no_pumpkin_for_user' || result.status === 'ignored_reward') return result;
+    if (result.duplicate || result.status === 'no_pumpkin_for_user' || result.status === 'ignored_reward' || result.status === 'no_safe_tower_layout' || result.status === 'no_pumpkins') return result;
+    if (result.global) {
+      this.emit('pumpkin:action', { id: null, action: result.action, ...result.payload });
+      return result;
+    }
     for (const pumpkin of result.updatedPumpkins || []) this.emit('pumpkin:updated', { pumpkin });
     if (result.pumpkin) this.emit('pumpkin:updated', { pumpkin: result.pumpkin });
-    this.emit('pumpkin:action', { id: result.pumpkin.id, action: result.action, ...result.payload });
+    this.emit('pumpkin:action', { id: result.pumpkin?.id || null, action: result.action, ...result.payload });
     return result;
   }
+  testAction(action) {
+    if (action !== 'pumpkin_tower') throw new Error('unsupported_dev_action');
+    let result;
+    this.db.transaction(() => { result = this._runPumpkinTower(this.db.getSettings(this.config), { test: true }); });
+    if (result.status === 'no_pumpkins' || result.status === 'no_safe_tower_layout') return result;
+    this.emit('pumpkin:action', { id: null, action: result.action, ...result.payload });
+    return result;
+  }
+  _runPumpkinTower(settings, { redemptionId = null, test = false } = {}) {
+    const all = this.db.listPumpkins();
+    const context = { scene: this.config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
+    const plan = buildTowerPlan(all, context, this.random);
+    if (plan?.mode === 'empty') return { duplicate: false, redemptionId, status: 'no_pumpkins', action: 'pumpkin_tower', test };
+    if (!plan) return { duplicate: false, redemptionId, status: 'no_safe_tower_layout', action: 'pumpkin_tower', test };
+    for (const final of plan.finalPositions) this.db.updatePumpkin(final.id, { x: final.x, y: final.y, parentId: null, stackOffsetY: null, isAirborne: false });
+    const finalPumpkins = this.db.listPumpkins().map(publicPumpkin);
+    return {
+      action: 'pumpkin_tower',
+      global: true,
+      redemptionId,
+      test,
+      updatedPumpkins: finalPumpkins,
+      payload: {
+        global: true,
+        ...(test ? { test: true } : {}),
+        mode: plan.mode,
+        direction: plan.direction,
+        sway: plan.sway,
+        groundY: plan.groundY,
+        participants: plan.participants,
+        finalPositions: plan.finalPositions,
+        finalPumpkins,
+      },
+    };
+  }
   applyAction(action, pumpkin, input, context) {
-    if (action === 'inflate') {
-      const neighbors = this.db.listPumpkins().filter((p) => p.id !== pumpkin.id && Math.hypot(p.x - pumpkin.x, p.y - pumpkin.y) <= 160);
-      const pushes = neighbors.map((neighbor) => { const dx = neighbor.x - pumpkin.x || (neighbor.id > pumpkin.id ? 1 : -1); const destination = clampPosition(neighbor, neighbor.x + Math.sign(dx) * 180, neighbor.y, context); const updated = this.db.updatePumpkin(neighbor.id, { x: destination.x, y: destination.y }); return { id: neighbor.id, x: destination.x, y: destination.y, pumpkin: publicPumpkin(updated) }; });
-      return { action, pumpkin: publicPumpkin(pumpkin), updatedPumpkins: pushes.map((push) => push.pumpkin), payload: { durationSeconds: 5, scale: 1.8, pushes: pushes.map(({ id, x, y }) => ({ id, x, y })) } };
-    }
-    if (action === 'jump_on') {
-      const all = this.db.listPumpkins(); const wanted = normalizeName(input); let target = all.find((p) => p.id !== pumpkin.id && (normalizeName(p.twitchUsername) === wanted || normalizeName(p.displayName) === wanted));
-      if (!target) target = all.filter((p) => p.id !== pumpkin.id && Math.hypot(p.x - pumpkin.x, p.y - pumpkin.y) <= 400).sort((a, b) => Math.hypot(a.x - pumpkin.x, a.y - pumpkin.y) - Math.hypot(b.x - pumpkin.x, b.y - pumpkin.y))[0];
-      if (!target) return { action, pumpkin: publicPumpkin(pumpkin), payload: { status: 'no_target' } };
-      const parentCheck = validateParentLink(pumpkin.id, target.id, all); if (!parentCheck.valid) return { action, pumpkin: publicPumpkin(pumpkin), payload: { status: parentCheck.reason } };
-      const targetSize = dimensionsFor(target); const position = clampPosition(pumpkin, target.x, target.y - targetSize.height, context);
-      const updated = this.db.updatePumpkin(pumpkin.id, { parentId: target.id, stackOffsetY: -targetSize.height, x: position.x, y: position.y });
-      return { action, pumpkin: publicPumpkin(updated), payload: { targetId: target.id } };
-    }
-    if (action === 'morph_fly' || action === 'bat' || action === 'ghost') {
-      const form = action === 'morph_fly' ? (this.random() < 0.5 ? 'bat' : 'ghost') : action; const target = clampPosition(pumpkin, this.random() * context.scene.width, context.scene.height * (0.25 + this.random() * 0.45), context);
-      const updated = this.db.updatePumpkin(pumpkin.id, { x: target.x, y: target.y, isAirborne: true, parentId: null, stackOffsetY: null });
-      return { action: 'morph_fly', pumpkin: publicPumpkin(updated), payload: { form, targetX: target.x, targetY: target.y } };
-    }
-    return { action, pumpkin: publicPumpkin(pumpkin), payload: { status: 'unsupported_action' } };
+    void input; void context;
+    return { action, pumpkin: publicPumpkin(pumpkin), payload: { status: 'abstract_action' } };
   }
 }
 export { parseRedemption };
