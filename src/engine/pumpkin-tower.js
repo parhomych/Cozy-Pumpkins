@@ -1,6 +1,5 @@
 import { dimensionsFor, isPositionValid } from './spatial-rules.js';
 
-export const MIN_TOPPLE_COUNT = 3;
 export const TOWER_STEP_RATIO = 0.72;
 
 function unitRandom(random) {
@@ -12,18 +11,26 @@ function sceneGroundY(context) {
   return Math.min(context.scene.height, Number.isFinite(context.scene.groundY) ? context.scene.groundY : context.scene.height);
 }
 
-function orderedPumpkins(pumpkins) {
-  return [...pumpkins].sort((a, b) => {
+function orderedPumpkins(pumpkins, context, stackOrder, random) {
+  const ordered = [...pumpkins].sort((a, b) => {
     const created = String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
     return created || String(a.id).localeCompare(String(b.id));
   });
+  if (stackOrder === 'largest-first') {
+    return ordered.sort((a, b) => dimensionsFor(b, context).width - dimensionsFor(a, context).width);
+  }
+  for (let index = ordered.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(unitRandom(random) * (index + 1));
+    [ordered[index], ordered[swapIndex]] = [ordered[swapIndex], ordered[index]];
+  }
+  return ordered;
 }
 
 function layoutAtX(ordered, x, context) {
   const groundY = sceneGroundY(context);
   const heights = ordered.map((pumpkin) => dimensionsFor(pumpkin, context).height);
   const maxHeight = Math.max(...heights);
-  const availableHeight = groundY - maxHeight;
+  const availableHeight = Math.max(0, groundY - maxHeight - 0.1);
   if (availableHeight < 0) return null;
 
   const desiredSteps = heights.slice(0, -1).reduce((total, height) => total + height * TOWER_STEP_RATIO, 0);
@@ -126,30 +133,53 @@ function randomTargetFor(pumpkin, range, groundY, context, occupied, random) {
   return null;
 }
 
-function rollTargets(ordered, anchorX, direction, context, random, groundY, maxWidth) {
-  const minX = maxWidth / 2;
-  const maxX = context.scene.width - minX;
-  const preferred = direction < 0 ? [minX, Math.max(minX, anchorX)] : [Math.min(maxX, anchorX), maxX];
+function packTargets(ordered, direction, context, groundY) {
+  const occupied = [];
+  const finalById = new Map();
+  const packingOrder = [...ordered].sort((a, b) => dimensionsFor(b, context).width - dimensionsFor(a, context).width);
+
+  for (const pumpkin of packingOrder) {
+    const width = dimensionsFor(pumpkin, context).width;
+    const minX = width / 2;
+    const maxX = context.scene.width - minX;
+    let target = null;
+    const step = 4;
+    const startsFromLeft = direction < 0;
+    const start = startsFromLeft ? minX : maxX;
+    const end = startsFromLeft ? maxX : minX;
+    const increment = startsFromLeft ? step : -step;
+    for (let x = start; startsFromLeft ? x <= end : x >= end; x += increment) {
+      target = safeTarget(pumpkin, x, groundY, context, occupied);
+      if (target) break;
+    }
+    if (!target) return null;
+    occupied.push({ x: target.x, pumpkin });
+    finalById.set(pumpkin.id, target);
+  }
+
+  return ordered.map((pumpkin) => finalById.get(pumpkin.id));
+}
+
+function rollTargets(ordered, anchorX, direction, context, random, groundY) {
   const occupied = [];
   const finalPositions = [];
 
   for (const pumpkin of ordered) {
+    const width = dimensionsFor(pumpkin, context).width;
+    const minX = width / 2;
+    const maxX = context.scene.width - minX;
+    const preferred = direction < 0 ? [minX, Math.min(maxX, anchorX)] : [Math.max(minX, anchorX), maxX];
     const target = randomTargetFor(pumpkin, preferred, groundY, context, occupied, random)
       || randomTargetFor(pumpkin, [minX, maxX], groundY, context, occupied, random);
-    if (!target) return null;
+    if (!target) return packTargets(ordered, direction, context, groundY);
     occupied.push({ x: target.x, pumpkin });
     finalPositions.push(target);
   }
   return finalPositions;
 }
 
-export function topplingProbability(count) {
-  if (count < MIN_TOPPLE_COUNT) return 0;
-  return Math.min(0.85, 0.18 + (count - MIN_TOPPLE_COUNT) * 0.1);
-}
-
-export function buildTowerPlan(pumpkins, context, random = Math.random) {
-  const ordered = orderedPumpkins(pumpkins);
+export function buildTowerPlan(pumpkins, context, random = Math.random, stackOrder = 'random') {
+  const ordered = orderedPumpkins(pumpkins, context, stackOrder, random);
   if (!ordered.length) return { mode: 'empty', participants: [], finalPositions: [] };
 
   const layout = chooseTowerLayout(ordered, context);
@@ -159,22 +189,11 @@ export function buildTowerPlan(pumpkins, context, random = Math.random) {
   const maxWidth = layout.maxWidth;
   const count = ordered.length;
   const sway = Math.min(12, 2 + count * 1.2);
-  const toppling = unitRandom(random) < topplingProbability(count);
-  if (!toppling) {
-    return {
-      mode: 'tower',
-      direction: null,
-      sway,
-      groundY: layout.groundY,
-      participants: layout.participants,
-      finalPositions: layout.participants.map(({ id, towerX, towerY }) => ({ id, x: towerX, y: towerY })),
-    };
-  }
 
   const leftSpace = horizontalClearance(ordered, anchorX, -1, context, maxWidth);
   const rightSpace = horizontalClearance(ordered, anchorX, 1, context, maxWidth);
   const direction = leftSpace === rightSpace ? (unitRandom(random) < 0.5 ? -1 : 1) : (leftSpace > rightSpace ? -1 : 1);
-  const finalPositions = rollTargets(ordered, anchorX, direction, context, random, layout.groundY, maxWidth);
+  const finalPositions = rollTargets(ordered, anchorX, direction, context, random, context.scene.height);
   if (!finalPositions) return null;
 
   const finalById = new Map(finalPositions.map((position) => [position.id, position]));
@@ -182,7 +201,7 @@ export function buildTowerPlan(pumpkins, context, random = Math.random) {
     mode: 'topple',
     direction: direction < 0 ? 'left' : 'right',
     sway,
-    groundY: layout.groundY,
+    groundY: context.scene.height,
     participants: layout.participants.map((participant, index) => ({
       ...participant,
       finalX: finalById.get(participant.id).x,

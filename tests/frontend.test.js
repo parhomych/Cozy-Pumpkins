@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { PumpkinRenderer } from '../public/js/shared/pumpkin-renderer.js';
 
 test('shared pumpkin artwork exposes independent reference layers and face parts', async () => {
   const source = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
@@ -18,6 +19,15 @@ test('shared pumpkin artwork exposes independent reference layers and face parts
   const stageFour = await readFile(new URL('../public/assets/pumpkin-stage-4.svg', import.meta.url), 'utf8');
   assert.match(stageFour, /<svg[^>]+width="961"[^>]+height="960"/);
   assert.equal((stageFour.match(/<path\b/g) || []).length, 1629);
+  const stageTwo = await readFile(new URL('../public/assets/pumpkin-stage-2.svg', import.meta.url), 'utf8');
+  assert.match(stageTwo, /width="1258"[^>]+height="1258"/);
+  assert.equal((stageTwo.match(/<path\b/g) || []).length, 1478);
+  assert.match(source, /STAGE_TWO_URL = '\/assets\/pumpkin-stage-2\.svg'/);
+  assert.match(source, /appendStageTwoPaths\(markup, artwork\)/);
+  assert.match(source, /stage-two-plant/);
+  assert.match(source, /faceAnchor\.setAttribute\('transform', 'translate\(0 253\)'\)/);
+  assert.match(source, /faceAnchor\.append\(face\)/);
+  assert.match(source, /if \(stage === 2\) rocker\.append\(faceAnchor, hat, accessory\)/);
 });
 
 test('shared pumpkin artwork anchors every growth stage to its bottom edge', async () => {
@@ -33,6 +43,8 @@ test('shared pumpkin artwork anchors every growth stage to its bottom edge', asy
   assert.match(source, /stage === 1 \|\| stage === 4/);
   assert.match(source, /leafBed\.setAttribute\('transform', stageTransform\);/);
   assert.match(source, /actor\.setAttribute\('transform', stageTransform\);/);
+  assert.match(source, /stage === 2\s*\?\s*'translate\(68 -45\)'/);
+  assert.match(source, /stage !== 1 && stage !== 2 && stage !== 4\) hydrateReferencePaths/);
 });
 
 test('admin interaction uses the transformed artwork hitbox instead of the shifted root square', async () => {
@@ -45,17 +57,19 @@ test('admin interaction uses the transformed artwork hitbox instead of the shift
   assert.match(svgSource, /mover\.append\(floater, interactionHitbox\)/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \{[\s\S]*pointer-events: none;/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \.interaction-hitbox \{[\s\S]*pointer-events: all;/);
-  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=hitbox-20261021"/);
-  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=hitbox-20261021"/);
+  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=tower-stack-order-20261022"/);
+  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=tower-range-20261022"/);
 });
 
 test('shared character includes smooth idle, face, stem, and cleanup animation hooks', async () => {
   const source = await readFile(new URL('../public/js/shared/pumpkin-character.js', import.meta.url), 'utf8');
-  for (const method of ['_scheduleFloat', '_scheduleBodyRock', '_scheduleStageOneCozy', '_scheduleStemSway', 'blink', '_animateMouth', 'stopIdle', 'destroy']) {
+  for (const method of ['_scheduleFloat', '_scheduleBodyRock', '_scheduleStageOneCozy', '_scheduleStageTwoPlantSway', '_scheduleStemSway', 'blink', '_animateMouth', 'stopIdle', 'destroy']) {
     assert.match(source, new RegExp(`\\b${method}\\s*\\(`), `missing animation method ${method}`);
   }
   assert.doesNotMatch(source, /repeatRefresh:/);
   assert.match(source, /this\.idleTimers\.clear\(\)/);
+  assert.match(source, /STAGE_TWO_PLANT_ORIGIN = '548 620'/);
+  assert.match(source, /if \(this\.stageTwoPlant\) gsap\.set\(this\.stageTwoPlant/);
 
   const floatBlock = source.slice(source.indexOf('  _scheduleFloat('), source.indexOf('  _scheduleBodyRock('));
   assert.match(floatBlock, /rotation:/);
@@ -69,6 +83,11 @@ test('shared character includes smooth idle, face, stem, and cleanup animation h
   assert.match(stageOneBlock, /stageOneLeavesRight/);
   assert.match(stageOneBlock, /sine\.inOut/);
   assert.match(stageOneBlock, /repeat: -1/);
+  const stageTwoBlock = source.slice(source.indexOf('  _scheduleStageTwoPlantSway('), source.indexOf('  _scheduleStemSway('));
+  assert.match(stageTwoBlock, /this\.stage !== 2/);
+  assert.match(stageTwoBlock, /svgOrigin: STAGE_TWO_PLANT_ORIGIN/);
+  assert.match(stageTwoBlock, /rotation: amplitude/);
+  assert.doesNotMatch(stageTwoBlock, /\by:/);
 
   const svgSource = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
   assert.match(svgSource, /stage-one-sprout/);
@@ -126,6 +145,78 @@ test('global pumpkin tower actions dispatch, roll to server targets, and clean u
   assert.match(character, /power3\.in/); assert.match(character, /groundY/); assert.match(character, /elastic\.out/);
 });
 
+test('tower lifetime starts after stacking and later activations still roll', () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const originalNow = Date.now;
+  const originalGsap = globalThis.gsap;
+  let now = 0;
+  let nextTimerId = 0;
+  const timers = new Map();
+  const rolls = [];
+
+  globalThis.setTimeout = (callback, delay = 0) => {
+    const id = ++nextTimerId;
+    timers.set(id, { callback, at: now + Math.max(0, Number(delay) || 0) });
+    return id;
+  };
+  globalThis.clearTimeout = (id) => timers.delete(id);
+  Date.now = () => now;
+  globalThis.gsap = undefined;
+
+  const advance = (duration) => {
+    const target = now + duration;
+    while (true) {
+      const due = [...timers.entries()].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!due) break;
+      const [id, timer] = due;
+      timers.delete(id);
+      now = timer.at;
+      timer.callback();
+    }
+    now = target;
+  };
+
+  try {
+    const renderer = new PumpkinRenderer(null, { settings: { towerAnimation: { lifetimeMinSeconds: 2.5, lifetimeMaxSeconds: 20 } } });
+    renderer.characters.set('pumpkin-1', {
+      data: { id: 'pumpkin-1' },
+      stack() {},
+      stopAction() {},
+      destroy() {},
+      rollTo(x, y, pumpkin) { rolls.push({ x, y, id: pumpkin.id }); },
+    });
+    const payload = {
+      direction: 'left',
+      groundY: 980,
+      lifetimeSeconds: 2.5,
+      participants: [{ id: 'pumpkin-1', level: 0, towerX: 900, towerY: 980, rollDelayMs: 0 }],
+      finalPumpkins: [{ id: 'pumpkin-1', x: 200, y: 980 }],
+    };
+
+    renderer.action(null, 'pumpkin_tower', payload);
+    advance(1379);
+    assert.equal(rolls.length, 0);
+    advance(2500);
+    assert.equal(rolls.length, 0, 'lifetime has not elapsed since the tower finished stacking');
+    advance(1);
+    assert.equal(rolls.length, 1);
+
+    renderer.action(null, 'pumpkin_tower', payload);
+    advance(1380 + 2500 - 1);
+    assert.equal(rolls.length, 1);
+    advance(1);
+    assert.equal(rolls.length, 2, 'a second tower activation still completes');
+    renderer.destroy();
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    Date.now = originalNow;
+    if (originalGsap === undefined) delete globalThis.gsap;
+    else globalThis.gsap = originalGsap;
+  }
+});
+
 test('admin scene settings expose and save global animation frequencies', async () => {
   const html = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
   assert.match(html, /id="eye-frequency"/);
@@ -134,7 +225,9 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(html, /data-reward-action="jump_on"/);
   assert.match(html, /id="save-reward-mapping"/);
   assert.match(html, /id="test-pumpkin-tower"/);
-  for (const id of ['tower-sway-amplitude', 'tower-sway-duration', 'tower-rotation-multiplier', 'tower-bend-multiplier']) assert.match(html, new RegExp(`id="${id}"`));
+  for (const id of ['tower-sway-amplitude', 'tower-sway-duration', 'tower-rotation-multiplier', 'tower-bend-multiplier', 'tower-lifetime-min-seconds', 'tower-lifetime-max-seconds', 'tower-stack-order']) assert.match(html, new RegExp(`id="${id}"`));
+  assert.match(html, /Fall after \(s\), min/);
+  assert.match(html, /Fall after \(s\), max/);
   assert.match(html, /id="refresh-twitch-rewards"/);
   assert.match(html, /data-reward-action="inflate"[^>]*>/);
   assert.doesNotMatch(html, /data-reward-action="inflate"[^>]*type="text"/);

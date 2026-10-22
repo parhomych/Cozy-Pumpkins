@@ -111,12 +111,15 @@
                  </div>
                  <div>
                    <h3>Pumpkin tower animation</h3>
-                   <p class="muted">Changes apply live to the active tower. Increase rotation to make each pumpkin visibly turn, and top bend to exaggerate the cartoon curve.</p>
+                   <p class="muted">Changes apply live to the active tower. Set how long it stands before every pumpkin falls and rolls away.</p>
                    <div class="form-grid">
                      <label>Sway amplitude (°)<input id="tower-sway-amplitude" type="number" min="0" max="60" step="1"></label>
                      <label>Sway duration (s)<input id="tower-sway-duration" type="number" min="0.1" max="30" step="0.1"></label>
                      <label>Rotation (×)<input id="tower-rotation-multiplier" type="number" min="0" max="5" step="0.05"></label>
                      <label>Top bend (×)<input id="tower-bend-multiplier" type="number" min="0" max="5" step="0.05"></label>
+                     <label>Fall after (s), min<input id="tower-lifetime-min-seconds" type="number" min="1" max="300" step="0.1"></label>
+                     <label>Fall after (s), max<input id="tower-lifetime-max-seconds" type="number" min="1" max="300" step="0.1"></label>
+                     <label>Stack order<select id="tower-stack-order"><option value="random">Random</option><option value="largest-first">Largest to smallest</option></select></label>
                    </div>
                    <p id="tower-animation-state" class="save-state" role="status" aria-live="polite"></p>
                  </div>
@@ -253,6 +256,6 @@
     <div id="toast" class="toast" role="status"></div>
     <script src="/vendor/gsap.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
-    <script type="module" src="/js/admin-app.js?v=hitbox-20261021"></script>
+    <script type="module" src="/js/admin-app.js?v=tower-stack-order-20261022"></script>
   </body>
 </html>

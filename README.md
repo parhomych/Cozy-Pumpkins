@@ -50,6 +50,8 @@ npm start
 Open `http://localhost:3000/admin.html` for the control panel. Add `http://localhost:3000/overlay.html` as a transparent OBS Browser Source at **1920 × 1080**. The browser files are served directly by Express; there is no frontend build step or CDN dependency.
 
 The development-only donation simulator appears in the admin panel when `NODE_ENV` is not `production`. It exercises the same server-side donation path and deduplication logic as an integration event. The Twitch reward section also exposes a local **Test Pumpkin tower activation** button that runs the global tower animation without Twitch credentials or a real redemption.
+The tower's fall delay can be randomized by setting minimum and maximum seconds in **Scene settings → Pumpkin tower animation**. Each activation chooses one delay on the server and shares it between the admin preview and OBS.
+The same section lets you choose whether tower layers are filled in a random pumpkin order or from largest to smallest; random is the default.
 
 ## Test and checks
 

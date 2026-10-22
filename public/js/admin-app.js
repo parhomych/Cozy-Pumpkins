@@ -1,4 +1,4 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=hitbox-20261021';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=tower-range-20261022';
 import { PumpkinCharacter } from './shared/pumpkin-character.js?v=hitbox-20261021';
 import { eventToLogical, rectToCss, clamp } from './shared/coordinate-mapper.js';
 import { bindPersistentDisclosures } from './admin-disclosures.js';
@@ -16,8 +16,9 @@ const GROWTH_MULTIPLIER_MAX = 3;
 const PREVIEW_CUSTOMIZATION = Object.freeze({ skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' });
 const ANIMATION_MIN = 0.1;
 const ANIMATION_MAX = 10;
-const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1 });
-const TOWER_ANIMATION_LIMITS = Object.freeze({ swayAmplitude: { min: 0, max: 60 }, swayDuration: { min: 0.1, max: 30 }, rotationMultiplier: { min: 0, max: 5 }, bendMultiplier: { min: 0, max: 5 } });
+const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
+const TOWER_ANIMATION_LIMITS = Object.freeze({ swayAmplitude: { min: 0, max: 60 }, swayDuration: { min: 0.1, max: 30 }, rotationMultiplier: { min: 0, max: 5 }, bendMultiplier: { min: 0, max: 5 }, lifetimeMinSeconds: { min: 1, max: 300 }, lifetimeMaxSeconds: { min: 1, max: 300 } });
+const TOWER_ANIMATION_INPUTS = Object.freeze({ swayAmplitude: 'tower-sway-amplitude', swayDuration: 'tower-sway-duration', rotationMultiplier: 'tower-rotation-multiplier', bendMultiplier: 'tower-bend-multiplier', lifetimeMinSeconds: 'tower-lifetime-min-seconds', lifetimeMaxSeconds: 'tower-lifetime-max-seconds', stackOrder: 'tower-stack-order' });
 const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost', 'pumpkin_tower']);
 const DEFAULT_REWARD_MAPPING = Object.freeze(Object.fromEntries(REWARD_ACTIONS.map((action) => [action, ''])));
 
@@ -317,17 +318,19 @@ function renderInspector() {
 }
 function renderAnimationSettings() { const animation = { ...DEFAULT_ANIMATION, ...(state.settings.animation || {}) }; $('#eye-frequency').value = animation.eyeFrequency; $('#mouth-frequency').value = animation.mouthFrequency; renderer.setSettings({ animation }); state.previewCharacter?.setAnimationSettings(animation).restartIdle(); }
 function normalizeTowerAnimation(value = {}, fallback = DEFAULT_TOWER_ANIMATION) {
-  return Object.fromEntries(Object.keys(DEFAULT_TOWER_ANIMATION).map((key) => {
+  const normalized = Object.fromEntries(Object.keys(TOWER_ANIMATION_LIMITS).map((key) => {
     const limits = TOWER_ANIMATION_LIMITS[key];
     const number = Number(value[key]);
     const safe = Number.isFinite(number) ? number : Number(fallback[key]);
     return [key, clamp(Number.isFinite(safe) ? safe : DEFAULT_TOWER_ANIMATION[key], limits.min, limits.max)];
   }));
+  normalized.stackOrder = ['random', 'largest-first'].includes(value.stackOrder) ? value.stackOrder : fallback.stackOrder;
+  return normalized;
 }
 function renderTowerAnimationSettings({ apply = true } = {}) {
   const towerAnimation = normalizeTowerAnimation(state.settings.towerAnimation);
   state.settings.towerAnimation = towerAnimation;
-  for (const key of Object.keys(DEFAULT_TOWER_ANIMATION)) $(`#tower-${key === 'swayAmplitude' ? 'sway-amplitude' : key === 'swayDuration' ? 'sway-duration' : key === 'rotationMultiplier' ? 'rotation-multiplier' : 'bend-multiplier'}`).value = towerAnimation[key];
+  for (const key of Object.keys(TOWER_ANIMATION_INPUTS)) $(`#${TOWER_ANIMATION_INPUTS[key]}`).value = towerAnimation[key];
   if (apply) renderer.setSettings({ towerAnimation });
 }
 function readTowerAnimationSettings() {
@@ -336,6 +339,8 @@ function readTowerAnimationSettings() {
     swayDuration: $('#tower-sway-duration'),
     rotationMultiplier: $('#tower-rotation-multiplier'),
     bendMultiplier: $('#tower-bend-multiplier'),
+    lifetimeMinSeconds: $('#tower-lifetime-min-seconds'),
+    lifetimeMaxSeconds: $('#tower-lifetime-max-seconds'),
   };
   const value = {};
   const invalid = [];
@@ -346,7 +351,15 @@ function readTowerAnimationSettings() {
     input.setCustomValidity(invalid.includes(key) ? `Use a value from ${limits.min} to ${limits.max}.` : '');
     input.toggleAttribute('aria-invalid', invalid.includes(key));
   }
-  if (invalid.length) { $('#tower-animation-state').textContent = 'Check the tower animation values.'; return null; }
+  if (value.lifetimeMinSeconds > value.lifetimeMaxSeconds) {
+    invalid.push('lifetimeMinSeconds', 'lifetimeMaxSeconds');
+    fields.lifetimeMinSeconds.setCustomValidity('Minimum lifetime must not exceed maximum lifetime.');
+    fields.lifetimeMaxSeconds.setCustomValidity('Maximum lifetime must not be below minimum lifetime.');
+    fields.lifetimeMinSeconds.setAttribute('aria-invalid', 'true');
+    fields.lifetimeMaxSeconds.setAttribute('aria-invalid', 'true');
+  }
+  if (invalid.length) { $('#tower-animation-state').textContent = 'Check the tower animation values and lifetime range.'; return null; }
+  value.stackOrder = $('#tower-stack-order').value;
   return value;
 }
 function setTowerAnimationSettings(next, { persist = true } = {}) {
@@ -389,7 +402,11 @@ async function testPumpkinTower() {
     const response = await fetch('/api/dev/reward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'pumpkin_tower' }) });
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error || 'test_action_failed');
-    status.textContent = body.result?.status === 'no_pumpkins' ? 'No pumpkins are available for the test.' : 'Test tower activation sent.';
+    status.textContent = body.result?.status === 'no_pumpkins'
+      ? 'No pumpkins are available for the test.'
+      : body.result?.status === 'no_safe_tower_layout'
+        ? 'Unable to build the tower safely. Check the scene and No-Go Zone.'
+        : 'Test tower activation sent.';
   } catch (error) {
     status.textContent = error.message === 'development_simulator_disabled' ? 'Test actions are available only in development.' : `Unable to activate test tower: ${error.message}`;
   } finally {
@@ -479,6 +496,7 @@ function wireUI() {
    $$('#zone-x, #zone-y, #zone-width, #zone-height').forEach((input) => input.addEventListener('input', () => setZone({ [input.id.replace('zone-', '')]: Number(input.value) })));
       $('#eye-frequency').addEventListener('input', () => setAnimationSettings({ eyeFrequency: $('#eye-frequency').value })); $('#mouth-frequency').addEventListener('input', () => setAnimationSettings({ mouthFrequency: $('#mouth-frequency').value }));
    $$('input[id^="tower-"]').forEach((input) => input.addEventListener('input', () => { const values = readTowerAnimationSettings(); if (values) setTowerAnimationSettings(values); }));
+   $('#tower-stack-order').addEventListener('change', () => { const values = readTowerAnimationSettings(); if (values) setTowerAnimationSettings(values); });
    $('#save-reward-mapping').addEventListener('click', saveRewardMapping); $('#refresh-twitch-rewards').addEventListener('click', () => void loadTwitchRewards()); $('#test-pumpkin-tower').addEventListener('click', () => void testPumpkinTower());
   $$('.provider-action').forEach((button) => button.addEventListener('click', () => providerAction(button.dataset.provider, button.dataset.connected === 'true')));
   $$('#inspector-form [data-slot]').forEach((select) => select.addEventListener('change', () => { const p = selected(); if (!p) return; const customization = { ...p.customization, [select.dataset.slot]: select.value }; patchPumpkin({ customization }, { persist: false }); }));

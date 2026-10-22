@@ -11,6 +11,7 @@ const REFERENCE_BODY_ORIGIN = '548 1035';
 const STAGE_ONE_SPROUT_ORIGIN = '1400 635';
 const STAGE_ONE_LEFT_LEAF_ORIGIN = '1300 430';
 const STAGE_ONE_RIGHT_LEAF_ORIGIN = '1535 430';
+const STAGE_TWO_PLANT_ORIGIN = '548 620';
 const BLINK_DELAY_MIN = 9000;
 const BLINK_DELAY_MAX = 18000;
 const ANIMATION_FREQUENCY_MIN = 0.1;
@@ -34,6 +35,11 @@ export class PumpkinCharacter {
       if (this.destroyed || !this.idleStarted) return;
       this._bindLayers();
       this._scheduleStageOneCozy();
+    });
+    this.root.addEventListener('stage-two-art-ready', () => {
+      if (this.destroyed || !this.idleStarted) return;
+      this._bindLayers();
+      this._scheduleStageTwoPlantSway();
     });
     this.x = Number(this.data.x) || 0;
     this.y = Number(this.data.y) || 980;
@@ -61,6 +67,7 @@ export class PumpkinCharacter {
     this.rocker = this.root.querySelector('.rocker');
     this.body = this.root.querySelector('.body');
     this.stageOneArt = this.root.querySelector('.stage-one-art');
+    this.stageTwoPlant = this.root.querySelector('.stage-two-plant');
     this.stageOneSprout = this.root.querySelector('.stage-one-sprout');
     this.stageOneLeavesLeft = this.root.querySelector('.stage-one-leaves-left');
     this.stageOneLeavesRight = this.root.querySelector('.stage-one-leaves-right');
@@ -221,6 +228,7 @@ export class PumpkinCharacter {
     this._scheduleFloat();
     this._scheduleBodyRock();
     this._scheduleStageOneCozy();
+    this._scheduleStageTwoPlantSway();
     this._scheduleStemSway();
     this._scheduleBlink();
     this._scheduleLook();
@@ -302,6 +310,20 @@ export class PumpkinCharacter {
     leafMotion(this.stageOneLeavesRight, STAGE_ONE_RIGHT_LEAF_ORIGIN, randomBetween(2.2, 4), randomBetween(.3, 1.1));
   }
 
+  _scheduleStageTwoPlantSway() {
+    const gsap = this._gsap();
+    if (this.stage !== 2 || !gsap || !this.stageTwoPlant) return;
+    const amplitude = randomBetween(1.6, 2.4);
+    this._trackIdle(gsap.fromTo(this.stageTwoPlant,
+      { rotation: -amplitude, svgOrigin: STAGE_TWO_PLANT_ORIGIN },
+      {
+        rotation: amplitude, svgOrigin: STAGE_TWO_PLANT_ORIGIN,
+        duration: randomBetween(5.2, 7.2), ease: 'sine.inOut',
+        yoyo: true, repeat: -1, overwrite: 'auto', delay: randomBetween(0, 1.4),
+      },
+    ));
+  }
+
   _scheduleStemSway() {
     const gsap = this._gsap();
     if (!gsap || !this.stem) return;
@@ -358,6 +380,7 @@ export class PumpkinCharacter {
       gsap.set(this.bodyLook, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.rocker || this.body, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.stem, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.stageTwoPlant) gsap.set(this.stageTwoPlant, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       if (this.stageOneArt) gsap.set(this.stageOneArt, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       if (this.stageOneSprout) gsap.set(this.stageOneSprout, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       if (this.stageOneLeavesLeft) gsap.set(this.stageOneLeavesLeft, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });

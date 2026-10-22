@@ -38,7 +38,7 @@ export class Database {
       let settingsColumns = new Set(this.sqlite.prepare('PRAGMA table_info(settings)').all().map((column) => column.name));
       const addedSettingsAnimation = !settingsColumns.has('animation_json');
       if (addedSettingsAnimation) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN animation_json TEXT NOT NULL DEFAULT '{"eyeFrequency":1,"mouthFrequency":1}'`);
-      if (!settingsColumns.has('tower_animation_json')) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN tower_animation_json TEXT NOT NULL DEFAULT '{"swayAmplitude":12,"swayDuration":2,"rotationMultiplier":1,"bendMultiplier":1}'`);
+      if (!settingsColumns.has('tower_animation_json')) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN tower_animation_json TEXT NOT NULL DEFAULT '{"swayAmplitude":12,"swayDuration":2,"rotationMultiplier":1,"bendMultiplier":1,"lifetimeMinSeconds":3,"lifetimeMaxSeconds":6,"stackOrder":"random"}'`);
       if (!settingsColumns.has('min_spawn_donation')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN min_spawn_donation REAL NOT NULL DEFAULT 0 CHECK(min_spawn_donation >= 0)');
       if (!settingsColumns.has('spawn_command')) this.sqlite.exec("ALTER TABLE settings ADD COLUMN spawn_command TEXT NOT NULL DEFAULT '!тыковка'");
       if (!settingsColumns.has('growth_thresholds_json')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN growth_thresholds_json TEXT');

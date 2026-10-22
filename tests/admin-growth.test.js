@@ -24,6 +24,7 @@ test('growth settings render four isolated previews and save only valid cumulati
   const end = source.indexOf('\nfunction ', start + 1);
   const renderer = source.slice(start, end);
   assert.match(renderer, /new PumpkinCharacter/);
+  assert.match(renderer, /for \(const stage of \[1, 2, 3, 4\]\)/);
   assert.match(renderer, /destroy\(\)/);
   assert.doesNotMatch(renderer, /state\.socket|renderer\.sync|renderer\.update/);
 });

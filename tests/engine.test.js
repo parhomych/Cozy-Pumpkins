@@ -278,8 +278,13 @@ test('tower animation settings persist, merge partial updates, and reject unsafe
   assert.deepEqual(towerAnimationPatch({ swayAmplitude: 24 }, DEFAULT_TOWER_ANIMATION), { ...DEFAULT_TOWER_ANIMATION, swayAmplitude: 24 });
   assert.equal(towerAnimationPatch({ swayDuration: Infinity }), null);
   assert.equal(towerAnimationPatch({ rotationMultiplier: -1 }), null);
+  assert.equal(towerAnimationPatch({ stackOrder: 'smallest-first' }), null);
+  assert.equal(towerAnimationPatch({ lifetimeMinSeconds: 10 }, { ...DEFAULT_TOWER_ANIMATION, lifetimeMaxSeconds: 8 }), null);
   db.updateSettings({ towerAnimation: { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1.5, bendMultiplier: 0.8 } }, config);
-  assert.deepEqual(db.getSettings(config).towerAnimation, { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1.5, bendMultiplier: 0.8 });
+  assert.deepEqual(db.getSettings(config).towerAnimation, { ...DEFAULT_TOWER_ANIMATION, swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1.5, bendMultiplier: 0.8 });
+  assert.equal(towerAnimationPatch({ lifetimeMaxSeconds: 301 }), null);
+  assert.deepEqual(towerAnimationPatch({ lifetimeMinSeconds: 4, lifetimeMaxSeconds: 10 }, DEFAULT_TOWER_ANIMATION), { ...DEFAULT_TOWER_ANIMATION, lifetimeMinSeconds: 4, lifetimeMaxSeconds: 10 });
+  assert.equal(towerAnimationPatch({ stackOrder: 'largest-first' }, DEFAULT_TOWER_ANIMATION).stackOrder, 'largest-first');
   db.close();
 });
 
@@ -310,9 +315,16 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
    assert.deepEqual(ioEvents.at(-1)[1].settings.animation, { eyeFrequency: 2.5, mouthFrequency: 3 });
    socketEvents.get('admin:settings:update')({ towerAnimation: { rotationMultiplier: 1.5 } });
-   assert.deepEqual(ioEvents.at(-1)[1].settings.towerAnimation, { swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1.5, bendMultiplier: 1 });
+   assert.deepEqual(ioEvents.at(-1)[1].settings.towerAnimation, { ...DEFAULT_TOWER_ANIMATION, rotationMultiplier: 1.5 });
    assert.equal(db.getSettings(config).towerAnimation.rotationMultiplier, 1.5);
-   socketEvents.get('admin:settings:update')({ towerAnimation: { bendMultiplier: 99 } });
+   socketEvents.get('admin:settings:update')({ towerAnimation: { lifetimeMinSeconds: 4, lifetimeMaxSeconds: 10 } });
+   assert.equal(ioEvents.at(-1)[1].settings.towerAnimation.lifetimeMinSeconds, 4);
+   assert.equal(ioEvents.at(-1)[1].settings.towerAnimation.lifetimeMaxSeconds, 10);
+   assert.equal(db.getSettings(config).towerAnimation.lifetimeMaxSeconds, 10);
+   socketEvents.get('admin:settings:update')({ towerAnimation: { stackOrder: 'largest-first' } });
+   assert.equal(ioEvents.at(-1)[1].settings.towerAnimation.stackOrder, 'largest-first');
+   assert.equal(db.getSettings(config).towerAnimation.stackOrder, 'largest-first');
+    socketEvents.get('admin:settings:update')({ towerAnimation: { bendMultiplier: 99 } });
    assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_tower_animation' }]);
   socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 0 } });
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_animation' }]);
@@ -433,18 +445,41 @@ test('pumpkin_tower maps by reward ID, affects every pumpkin without a linked re
   const db = testDatabase(config);
   const donations = new DonationService({ db, config, idFactory: (() => { let id = 0; return () => `tower-pumpkin-${++id}`; })() });
   for (let index = 0; index < 3; index += 1) donations.handle({ id: `tower-donation-${index}`, name: `Viewer ${index}`, amount: 100, currency: 'RUB', message: '!тыковка' });
-  db.updateSettings({ rewardMapping: { pumpkin_tower: 'tower-reward' }, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 } }, config);
+  db.updatePumpkin('tower-pumpkin-1', { stage: 1 });
+  db.updatePumpkin('tower-pumpkin-2', { stage: 3 });
+  db.updatePumpkin('tower-pumpkin-3', { stage: 2 });
+  db.updateSettings({ rewardMapping: { pumpkin_tower: 'tower-reward' }, towerAnimation: { stackOrder: 'largest-first' }, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 } }, config);
   const events = [];
   const rewards = new RewardService({ db, config, random: () => 1, emit: (event, payload) => events.push([event, payload]) });
   const result = rewards.handle({ id: 'tower-redemption', rewardId: 'tower-reward', userId: 'unlinked', userLogin: 'unlinked' });
   assert.equal(result.action, 'pumpkin_tower');
-  assert.equal(result.payload.mode, 'tower');
+  assert.equal(result.payload.mode, 'topple');
+  assert.deepEqual(result.payload.participants.map(({ id }) => id), ['tower-pumpkin-2', 'tower-pumpkin-3', 'tower-pumpkin-1']);
   assert.equal(result.updatedPumpkins.length, 3);
   assert.equal(result.payload.finalPumpkins.length, 3);
+  assert.ok(result.payload.lifetimeSeconds >= DEFAULT_TOWER_ANIMATION.lifetimeMinSeconds);
+  assert.ok(result.payload.lifetimeSeconds <= DEFAULT_TOWER_ANIMATION.lifetimeMaxSeconds);
   assert.equal(rewards.handle({ id: 'tower-redemption', rewardId: 'tower-reward', userId: 'unlinked', userLogin: 'unlinked' }).duplicate, true);
   assert.equal(events.filter(([event]) => event === 'pumpkin:updated').length, 0);
   assert.equal(events.filter(([event]) => event === 'pumpkin:action').length, 1);
+  const repeated = rewards.handle({ id: 'tower-redemption-second', rewardId: 'tower-reward', userId: 'unlinked', userLogin: 'unlinked' });
+  assert.equal(repeated.action, 'pumpkin_tower');
+  assert.equal(events.filter(([event]) => event === 'pumpkin:action').length, 2);
   for (const pumpkin of db.listPumpkins()) assert.equal(isPositionValid(pumpkin, pumpkin.x, pumpkin.y, { scene: config.scene, noGoZone: { enabled: false } }), true);
+  db.close();
+});
+
+test('pumpkin tower chooses and broadcasts its lifetime from the configured range', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const donations = new DonationService({ db, config });
+  donations.handle({ id: 'tower-lifetime-donation', name: 'Lifetime Viewer', amount: 100, currency: 'RUB', message: '!тыковка' });
+  db.updateSettings({ towerAnimation: { lifetimeMinSeconds: 5, lifetimeMaxSeconds: 9 } }, config);
+  const events = [];
+  const rewards = new RewardService({ db, config, random: () => 0.75, emit: (event, payload) => events.push([event, payload]) });
+  const result = rewards.testAction('pumpkin_tower');
+  assert.equal(result.payload.lifetimeSeconds, 8);
+  assert.equal(events.at(-1)[1].lifetimeSeconds, 8);
   db.close();
 });
 
@@ -458,9 +493,10 @@ test('pumpkin_tower forced topple emits safe unique bottom targets and clears pa
   const rewards = new RewardService({ db, config, random: () => 0 });
   const result = rewards.handle({ id: 'forced-topple', rewardId: 'tower-reward', userId: 'nobody', userLogin: 'nobody' });
   assert.equal(result.payload.mode, 'topple');
-  assert.equal(result.payload.groundY, config.scene.groundY);
+  assert.equal(result.payload.groundY, config.scene.height);
   assert.equal(new Set(result.payload.finalPositions.map(({ x }) => x)).size, 3);
   for (const target of result.payload.finalPositions) {
+    assert.equal(target.y, config.scene.height);
     const pumpkin = db.getPumpkin(target.id);
     assert.deepEqual({ x: pumpkin.x, y: pumpkin.y }, { x: target.x, y: target.y });
     assert.equal(pumpkin.parentId, null);
@@ -469,14 +505,73 @@ test('pumpkin_tower forced topple emits safe unique bottom targets and clears pa
   db.close();
 });
 
+test('pumpkin_tower always plans a fall for any number of pumpkins', () => {
+  const config = testConfig();
+  const context = { scene: config.scene, noGoZone: { enabled: false } };
+  for (const count of [1, 2, 3, 5]) {
+    const pumpkins = Array.from({ length: count }, (_, index) => ({
+      id: `always-topple-${count}-${index}`,
+      createdAt: `2026-01-${String(index + 1).padStart(2, '0')}`,
+      stage: 1,
+      x: 200 + index * 200,
+      y: config.scene.groundY,
+    }));
+    const plan = buildTowerPlan(pumpkins, context, () => 1);
+    assert.equal(plan.mode, 'topple');
+    assert.equal(plan.finalPositions.length, count);
+  }
+});
+
+test('tower target planning falls back to a safe packing when random targets block later pumpkins', () => {
+  const config = testConfig();
+  const context = { scene: config.scene, noGoZone: { enabled: false } };
+  let randomState = 0x1a2b3c4d;
+  const random = () => {
+    randomState = (1664525 * randomState + 1013904223) >>> 0;
+    return randomState / 0x100000000;
+  };
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const pumpkins = Array.from({ length: 7 }, (_, index) => ({
+      id: `random-pack-${attempt}-${index}`,
+      createdAt: `2026-01-${String(index + 1).padStart(2, '0')}`,
+      stage: 1 + Math.floor(random() * 4),
+      x: 100 + index * 150,
+      y: config.scene.groundY,
+    }));
+    const plan = buildTowerPlan(pumpkins, context, random);
+    assert.ok(plan, `tower layout failed on attempt ${attempt}`);
+    assert.equal(new Set(plan.finalPositions.map(({ x }) => x)).size, pumpkins.length);
+    const pumpkinsById = new Map(pumpkins.map((pumpkin) => [pumpkin.id, pumpkin]));
+    assert.ok(plan.finalPositions.every(({ id, x, y }) => isPositionValid(pumpkinsById.get(id), x, y, context)));
+  }
+});
+
+test('tower stack order defaults to random and can place the largest pumpkins first', () => {
+  const config = testConfig();
+  const context = { scene: config.scene, noGoZone: { enabled: false } };
+  const pumpkins = [1, 2, 3].map((stage) => ({
+    id: `stack-order-${stage}`,
+    createdAt: `2026-01-0${stage}`,
+    stage,
+    x: stage * 200,
+    y: config.scene.groundY,
+  }));
+  const randomized = buildTowerPlan(pumpkins, context, () => 0);
+  const largestFirst = buildTowerPlan(pumpkins, context, () => 0, 'largest-first');
+
+  assert.deepEqual(randomized.participants.map(({ id }) => id), ['stack-order-2', 'stack-order-3', 'stack-order-1']);
+  assert.deepEqual(largestFirst.participants.map(({ id }) => id), ['stack-order-3', 'stack-order-2', 'stack-order-1']);
+});
+
 test('tower planning chooses the freer side and refuses an impossible No-Go Zone without partial targets', () => {
   const config = testConfig();
   const pumpkins = [1, 2, 3].map((index) => ({ id: `plan-${index}`, createdAt: `2026-01-0${index}`, stage: 1, x: index * 200, y: config.scene.groundY }));
   const context = { scene: config.scene, noGoZone: { enabled: true, x: 1200, y: 0, width: 720, height: 1080 } };
   const plan = buildTowerPlan(pumpkins, context, () => 0);
   assert.equal(plan.direction, 'left');
+  assert.ok(plan.finalPositions.every(({ y }) => y === config.scene.height));
   assert.ok(plan.finalPositions.every(({ x, y }, index) => {
-    const pumpkin = pumpkins[index];
+    const pumpkin = pumpkins.find(({ id }) => id === plan.finalPositions[index].id);
     return isPositionValid(pumpkin, x, y, context);
   }));
   assert.equal(buildTowerPlan(pumpkins, { scene: config.scene, noGoZone: { enabled: true, x: 0, y: 0, width: config.scene.width, height: config.scene.height } }, () => 0), null);

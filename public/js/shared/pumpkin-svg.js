@@ -1,6 +1,7 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const REFERENCE_URL = '/assets/pumpkin-reference.svg';
 const STAGE_ONE_URL = '/assets/pumpkin-stage-1.svg';
+const STAGE_TWO_URL = '/assets/pumpkin-stage-2.svg';
 const STAGE_FOUR_URL = '/assets/pumpkin-stage-4.svg';
 const REFERENCE_VIEWBOX = 1095;
 export const REFERENCE_DISPLAY_SIZE = 220;
@@ -28,6 +29,7 @@ export const CUSTOMIZATION_SLOTS = ['skin', 'eyes', 'mouth', 'hat', 'prop'];
 
 let referenceMarkupPromise;
 let stageOneMarkupPromise;
+let stageTwoMarkupPromise;
 
 function node(name, attrs = {}, children = []) {
   const el = document.createElementNS(SVG_NS, name);
@@ -69,6 +71,15 @@ function loadStageOneMarkup() {
   return stageOneMarkupPromise;
 }
 
+function loadStageTwoMarkup() {
+  if (stageTwoMarkupPromise) return stageTwoMarkupPromise;
+  if (typeof fetch !== 'function') return Promise.resolve(null);
+  stageTwoMarkupPromise = fetch(STAGE_TWO_URL, { credentials: 'same-origin' })
+    .then((response) => response.ok ? response.text() : null)
+    .catch(() => null);
+  return stageTwoMarkupPromise;
+}
+
 function stageOneArtwork() {
   const artwork = node('svg', {
     class: 'stage-one-art', x: '0', y: '0', width: String(REFERENCE_VIEWBOX), height: String(REFERENCE_VIEWBOX),
@@ -80,6 +91,20 @@ function stageOneArtwork() {
     preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true',
   }));
   void loadStageOneMarkup().then((markup) => { if (markup) appendStageOnePaths(markup, artwork); });
+  return artwork;
+}
+
+function stageTwoArtwork() {
+  const artwork = node('svg', {
+    class: 'stage-two-art', x: '0', y: '0', width: String(REFERENCE_VIEWBOX), height: String(REFERENCE_VIEWBOX),
+    viewBox: '0 0 1258 1258', preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true',
+  });
+  artwork.append(node('image', {
+    class: 'stage-two-art-fallback', href: STAGE_TWO_URL,
+    x: '0', y: '0', width: '1258', height: '1258',
+    preserveAspectRatio: 'xMidYMid meet', 'aria-hidden': 'true',
+  }));
+  void loadStageTwoMarkup().then((markup) => { if (markup) appendStageTwoPaths(markup, artwork); });
   return artwork;
 }
 
@@ -96,7 +121,7 @@ function stageFourArtwork() {
   return artwork;
 }
 
-function isGreenStageOnePath(source) {
+function isGreenPath(source) {
   const fill = source.getAttribute('fill') || '';
   if (!/^#[0-9a-f]{6}$/iu.test(fill)) return false;
   const hex = fill.slice(1);
@@ -127,7 +152,7 @@ function stageOnePathBounds(source, probe) {
 }
 
 function isStageOneSproutPath(source, bounds) {
-  if (!isGreenStageOnePath(source) || stageOneTranslateY(source) > 530) return false;
+  if (!isGreenPath(source) || stageOneTranslateY(source) > 530) return false;
   if (!bounds) return (source.getAttribute('d') || '').length < 12000;
   return bounds.width < 400 && bounds.height < 400;
 }
@@ -153,7 +178,7 @@ function appendStageOnePaths(markup, artwork) {
   paths.forEach((source) => {
     const clone = document.importNode ? document.importNode(source, true) : source.cloneNode(true);
     const bounds = stageOnePathBounds(source, probe);
-    const green = isGreenStageOnePath(source);
+    const green = isGreenPath(source);
     const sproutPath = isStageOneSproutPath(source, bounds);
     // The vectorizer includes a large green underpainting silhouette for the
     // whole character. It sits behind the orange pumpkin in the source SVG,
@@ -168,6 +193,25 @@ function appendStageOnePaths(markup, artwork) {
   sprout.append(sproutStem, leavesLeft, leavesRight);
   artwork.append(base, sprout);
   artwork.dispatchEvent(new CustomEvent('stage-one-art-ready', { bubbles: true }));
+  return true;
+}
+
+function appendStageTwoPaths(markup, artwork) {
+  if (!markup || typeof DOMParser !== 'function') return false;
+  const parsed = new DOMParser().parseFromString(markup, 'image/svg+xml');
+  if (parsed.querySelector('parsererror')) return false;
+  const paths = [...parsed.documentElement.children].filter((element) => element.localName === 'path');
+  if (!paths.length) return false;
+
+  const plant = group('stage-two-plant');
+  const body = group('stage-two-body-art');
+  paths.forEach((source) => {
+    const clone = document.importNode ? document.importNode(source, true) : source.cloneNode(true);
+    (isGreenPath(source) ? plant : body).append(clone);
+  });
+  artwork.querySelector('.stage-two-art-fallback')?.remove();
+  artwork.append(plant, body);
+  artwork.dispatchEvent(new CustomEvent('stage-two-art-ready', { bubbles: true }));
   return true;
 }
 
@@ -303,6 +347,7 @@ export function createPumpkinSvg(pumpkin = {}) {
     highlights: group('highlights highlight-group'),
   };
   if (stage === 1) layers.body.append(stageOneArtwork());
+  else if (stage === 2) layers.body.append(stageTwoArtwork());
   else if (stage === 4) layers.body.append(stageFourArtwork());
   else layers.body.append(layers.fallback);
   const faceMask = group('face-mask face-mask-reference');
@@ -312,11 +357,16 @@ export function createPumpkinSvg(pumpkin = {}) {
   // cannot make the pumpkin slide away from its base.
   if (stage !== 4) leafBed.append(layers.leaves, layers.leavesFront);
   rocker.append(layers.body, layers.bodyAccent, layers.stem, layers.highlights);
-  if (stage !== 1) rocker.append(faceMask);
-  if (stage !== 1 && stage !== 4) hydrateReferencePaths(layers);
+  if (stage !== 1 && stage !== 2) rocker.append(faceMask);
+  if (stage !== 1 && stage !== 2 && stage !== 4) hydrateReferencePaths(layers);
 
   const face = group(`face face-${customization.mouth}`);
   addFaceOverlay(face, customization);
+  const faceAnchor = group('face-anchor');
+  if (stage === 2) {
+    faceAnchor.setAttribute('transform', 'translate(0 253)');
+    faceAnchor.append(face);
+  }
   const hat = group('hat hat-accessory', []); hat.setAttribute('transform', `scale(${LEGACY_SCALE})`);
   if (customization.hat === 'witch') hat.append(path('M66 88 Q110 73 154 88 L163 99 Q110 109 57 99Z', { fill: '#322548', stroke: '#24182a', 'stroke-width': '4' }), path('M77 85 L108 17 Q135 37 142 86Z', { fill: '#4a336f', stroke: '#24182a', 'stroke-width': '4' }));
   else if (customization.hat === 'halo') hat.append(node('ellipse', { cx: '110', cy: '47', rx: '38', ry: '11', fill: 'none', stroke: '#ffe19b', 'stroke-width': '7', filter: `url(#pumpkin-glow-${pumpkin.id || 'new'})` }));
@@ -331,7 +381,8 @@ export function createPumpkinSvg(pumpkin = {}) {
   else if (customization.prop === 'spider') accessory.append(node('circle', { cx: '51', cy: '196', r: '10', fill: '#24182a' }), path('M43 190 l-17 -12 M43 197 l-20 2 M43 204 l-16 13 M59 190 l17 -12 M59 197 l20 2 M59 204 l16 13', { stroke: '#24182a', 'stroke-width': '3' }));
   else if (customization.prop === 'candle') accessory.append(node('rect', { x: '102', y: '42', width: '16', height: '33', rx: '5', fill: '#f1d49b', stroke: '#7d4c29', 'stroke-width': '3' }));
 
-  if (stage !== 1) rocker.append(face, hat, accessory);
+  if (stage === 2) rocker.append(faceAnchor, hat, accessory);
+  else if (stage !== 1) rocker.append(face, hat, accessory);
   bodyLook.append(rocker);
   bodyMotion.append(bodyLook);
   actor.append(bodyMotion);
@@ -340,6 +391,8 @@ export function createPumpkinSvg(pumpkin = {}) {
   // the visual artwork and the drag hitbox disagree at stages 1 and 4.
   const stageTransform = stage === 1 || stage === 4
     ? 'translate(0 0)'
+    : stage === 2
+      ? 'translate(68 -45)'
     : `translate(${REFERENCE_VIEWBOX / 2 - REFERENCE_ARTWORK_CENTER_X} ${REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM})`;
   leafBed.setAttribute('transform', stageTransform);
   actor.setAttribute('transform', stageTransform);

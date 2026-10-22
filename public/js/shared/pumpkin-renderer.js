@@ -1,11 +1,11 @@
 import { PumpkinCharacter } from './pumpkin-character.js?v=hitbox-20261021';
 
-const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1 });
+const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
 
 export class PumpkinRenderer {
   constructor(container, { interactive = false, onSelect = null, settings = null } = {}) {
     this.container = container; this.interactive = interactive; this.onSelect = onSelect; this.settings = settings || {}; this.characters = new Map(); this.sequence = new Map();
-    this.container?.classList.add('pumpkin-layer'); this.towerTimers = new Set(); this.towerTweens = new Set(); this.towerMotion = null; this.towerParticipants = []; this.towerPayload = {}; this.towerSwayActive = false;
+    this.container?.classList.add('pumpkin-layer'); this.towerTimers = new Set(); this.towerTweens = new Set(); this.towerMotion = null; this.towerParticipants = []; this.towerPayload = {}; this.towerSwayActive = false; this.towerRoll = null;
   }
   add(pumpkin, { immediate = true } = {}) {
     if (!pumpkin?.id) return null;
@@ -28,6 +28,7 @@ export class PumpkinRenderer {
     this.settings = { ...this.settings, ...settings, animation: { ...(this.settings.animation || {}), ...(settings.animation || {}) }, towerAnimation: { ...DEFAULT_TOWER_ANIMATION, ...(this.settings.towerAnimation || {}), ...(settings.towerAnimation || {}) }, growthMultipliers: { ...(this.settings.growthMultipliers || {}), ...(settings.growthMultipliers || {}) } };
     for (const character of this.characters.values()) { character.setAnimationSettings(this.settings.animation); character.setGrowthMultipliers(this.settings.growthMultipliers); character.restartIdle(); }
     if (wasSwaying) this.startTowerSway(participants, payload);
+    if (this.towerRoll) this.scheduleTowerRoll();
     return this;
   }
   setPosition(id, x, y, { immediate = false, isAirborne } = {}) { const character = this.characters.get(id); if (!character) return; character.moveTo(x, y, { immediate, isAirborne }); }
@@ -36,7 +37,7 @@ export class PumpkinRenderer {
   remove(id, { animate = true } = {}) { const character = this.characters.get(id); if (!character) return; this.stopActions(); this.characters.delete(id); this.sequence.delete(id); if (animate) character.disappear(() => character.destroy()); else character.destroy(); }
   clear() { this.stopActions(); for (const id of [...this.characters.keys()]) this.remove(id, { animate: false }); }
   stopTowerMotion() { for (const tween of this.towerTweens) tween.kill?.(); this.towerTweens.clear(); this.towerMotion = null; this.towerSwayActive = false; }
-  stopActions() { for (const timer of this.towerTimers) clearTimeout(timer); this.towerTimers.clear(); this.stopTowerMotion(); for (const character of this.characters.values()) character.stopAction?.(); }
+  stopActions() { for (const timer of this.towerTimers) clearTimeout(timer); this.towerTimers.clear(); this.towerRoll = null; this.stopTowerMotion(); for (const character of this.characters.values()) character.stopAction?.(); }
   startTowerSway(participants = [], payload = {}) {
     const gsap = globalThis.gsap || globalThis.window?.gsap;
     if (!gsap || !participants.length) return;
@@ -112,28 +113,49 @@ export class PumpkinRenderer {
   rollPumpkins(finalPumpkins = [], payload = {}) {
     const participants = Array.isArray(payload.participants) ? payload.participants : [];
     const delayFor = (item, index) => Number.isFinite(Number(item?.delayMs ?? item?.rollDelayMs)) ? Number(item?.delayMs ?? item?.rollDelayMs) : index * 180;
-    const waitMs = Math.max(4400, ...participants.map((item, index) => delayFor(item, index) + 4400));
-    const direction = payload.direction === 'left' ? -1 : 1;
-    const participantDelays = new Map(participants.map((item, index) => [item?.id, delayFor(item, index)]));
+    const stackReadyAt = Date.now() + Math.max(0, ...participants.map((item, index) => delayFor(item, index) + 1380 + Math.min(220, index * 30)));
+    this.towerRoll = { finalPumpkins, payload, participants, stackReadyAt };
+    this.scheduleTowerRoll();
+  }
+  scheduleTowerRoll() {
+    if (!this.towerRoll) return;
+    const roll = this.towerRoll;
+    if (roll.timer) {
+      clearTimeout(roll.timer);
+      this.towerTimers.delete(roll.timer);
+    }
+    const eventLifetime = Number(roll.payload.lifetimeSeconds);
+    const minLifetime = Number(this.settings.towerAnimation?.lifetimeMinSeconds);
+    const maxLifetime = Number(this.settings.towerAnimation?.lifetimeMaxSeconds);
+    const lifetime = Number.isFinite(eventLifetime)
+      ? eventLifetime
+      : (Number.isFinite(minLifetime) && Number.isFinite(maxLifetime) ? (minLifetime + maxLifetime) / 2 : (DEFAULT_TOWER_ANIMATION.lifetimeMinSeconds + DEFAULT_TOWER_ANIMATION.lifetimeMaxSeconds) / 2);
+    const deadline = roll.stackReadyAt + lifetime * 1000;
     const timer = setTimeout(() => {
       this.towerTimers.delete(timer);
+      this.towerRoll = null;
+      for (const pending of this.towerTimers) clearTimeout(pending);
+      this.towerTimers.clear();
       this.stopTowerMotion();
-      for (const [index, pumpkin] of finalPumpkins.entries()) {
+      const direction = roll.payload.direction === 'left' ? -1 : 1;
+      const participantDelays = new Map(roll.participants.map((item, index) => [item?.id, Number(item?.delayMs ?? item?.rollDelayMs) || index * 180]));
+      for (const [index, pumpkin] of roll.finalPumpkins.entries()) {
         const delay = (participantDelays.get(pumpkin?.id) || index * 180) / 1000;
         this.characters.get(pumpkin?.id)?.rollTo?.(pumpkin.x, pumpkin.y, pumpkin, {
           direction,
           delay,
-          groundY: Number.isFinite(Number(payload.groundY)) ? Number(payload.groundY) : 980,
+          groundY: Number.isFinite(Number(pumpkin.y)) ? Number(pumpkin.y) : Number.isFinite(Number(roll.payload.groundY)) ? Number(roll.payload.groundY) : 980,
         });
       }
-    }, waitMs);
+    }, Math.max(0, deadline - Date.now()));
+    roll.timer = timer;
     this.towerTimers.add(timer);
   }
   action(id, action, payload = {}) {
     if (action === 'pumpkin_tower') {
       for (const pumpkin of payload.finalPumpkins || []) if (pumpkin?.id && !this.characters.has(pumpkin.id)) this.add(pumpkin, { immediate: true });
       this.stackPumpkins(payload.participants || [], payload);
-      if (payload.mode === 'topple') this.rollPumpkins(payload.finalPumpkins || [], payload);
+      this.rollPumpkins(payload.finalPumpkins || [], payload);
       return;
     }
     void id; void action; void payload;

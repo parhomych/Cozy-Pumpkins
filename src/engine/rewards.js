@@ -35,6 +35,10 @@ function parseRedemption(raw) {
   if (!redemptionId || !rewardId || (!userId && !userLogin)) throw new Error('invalid_redemption_event');
   return { redemptionId, rewardId, userId, userLogin, input };
 }
+function randomUnit(random) {
+  const value = Number(random?.());
+  return Number.isFinite(value) ? Math.max(0, Math.min(0.999999, value)) : 0.5;
+}
 function mappedAction(rewardId, mapping) { for (const [action, id] of Object.entries(mapping || {})) if (id && id === rewardId) return action; return null; }
 export class RewardService {
   constructor({ db, config, logger = console, emit = () => {}, random = Math.random } = {}) { Object.assign(this, { db, config, logger, emit, random }); }
@@ -75,9 +79,11 @@ export class RewardService {
   _runPumpkinTower(settings, { redemptionId = null, test = false } = {}) {
     const all = this.db.listPumpkins();
     const context = { scene: this.config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
-    const plan = buildTowerPlan(all, context, this.random);
+    const plan = buildTowerPlan(all, context, this.random, settings.towerAnimation.stackOrder);
     if (plan?.mode === 'empty') return { duplicate: false, redemptionId, status: 'no_pumpkins', action: 'pumpkin_tower', test };
     if (!plan) return { duplicate: false, redemptionId, status: 'no_safe_tower_layout', action: 'pumpkin_tower', test };
+    const { lifetimeMinSeconds, lifetimeMaxSeconds } = settings.towerAnimation;
+    const lifetimeSeconds = lifetimeMinSeconds + (lifetimeMaxSeconds - lifetimeMinSeconds) * randomUnit(this.random);
     for (const final of plan.finalPositions) this.db.updatePumpkin(final.id, { x: final.x, y: final.y, parentId: null, stackOffsetY: null, isAirborne: false });
     const finalPumpkins = this.db.listPumpkins().map(publicPumpkin);
     return {
@@ -93,6 +99,7 @@ export class RewardService {
         direction: plan.direction,
         sway: plan.sway,
         groundY: plan.groundY,
+        lifetimeSeconds,
         participants: plan.participants,
         finalPositions: plan.finalPositions,
         finalPumpkins,
