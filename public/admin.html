@@ -109,6 +109,15 @@
                      <label>Mouth movement frequency (×)<input id="mouth-frequency" type="number" min="0.1" max="10" step="0.1"></label>
                    </div>
                  </div>
+                 <div>
+                   <h3>Pumpkin movement</h3>
+                   <p class="muted">One eligible pumpkin starts moving after each interval. Speed is measured in scene pixels per second.</p>
+                   <div class="form-grid">
+                     <label>Movement interval (seconds)<input id="roaming-interval-seconds" type="number" min="1" max="60" step="1"></label>
+                     <label>Movement speed (pixels/second)<input id="roaming-speed" type="number" min="40" max="400" step="10"></label>
+                   </div>
+                   <p id="roaming-settings-state" class="save-state" role="status" aria-live="polite"></p>
+                 </div>
                  <div class="name-appearance-settings">
                    <h3>Donor name appearance</h3>
                    <label for="pumpkin-name-font-size">Font size (<output id="pumpkin-name-font-size-value">14</output> px)</label>
@@ -268,6 +277,6 @@
     <div id="toast" class="toast" role="status"></div>
     <script src="/vendor/gsap.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
-    <script type="module" src="/js/admin-app.js?v=donation-spawn-20261022"></script>
+    <script type="module" src="/js/admin-app.js?v=pumpkin-cartoon-squash-20261023"></script>
   </body>
 </html>

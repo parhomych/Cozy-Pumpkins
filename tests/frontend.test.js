@@ -1,7 +1,317 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { PumpkinCharacter } from '../public/js/shared/pumpkin-character.js';
 import { PumpkinRenderer } from '../public/js/shared/pumpkin-renderer.js';
+
+function createPhysicsCharacter({ x = 0, y = 0, stageSize = 20 } = {}) {
+  const character = Object.create(PumpkinCharacter.prototype);
+  character.x = x;
+  character.y = y;
+  character.stageSize = stageSize;
+  character.velocity = { x: 0, y: 0 };
+  character.supportY = y;
+  character.physicsAccumulator = 0;
+  character.physicsActive = false;
+  character.isAirborne = false;
+  character.destroyed = false;
+  character.data = {};
+  character.stopAction = () => {};
+  character.root = {
+    classList: {
+      add() {},
+      remove() {},
+      toggle() {},
+    },
+  };
+  character._setPosition = (nextX, nextY) => {
+    character.x = nextX;
+    character.y = nextY;
+  };
+  return character;
+}
+
+test('pumpkin physics falls to the configured ground', () => {
+  const falling = createPhysicsCharacter();
+  falling.startPhysics({ supportY: 100 });
+  for (let frame = 0; frame < 20 && falling.physicsActive; frame += 1) {
+    falling.stepPhysics(1 / 60, { groundY: 100 });
+  }
+  assert.equal(falling.y, 100);
+  assert.equal(falling.isAirborne, false);
+  assert.equal(falling.physicsActive, false);
+
+  const delayed = createPhysicsCharacter();
+  delayed.startPhysics({ supportY: 1000 });
+  delayed.stepPhysics(1, { groundY: 1000 });
+  assert.ok(delayed.y < 10, 'a delayed animation frame is capped to 50 ms');
+
+  const fallingPastPumpkin = createPhysicsCharacter({ x: 50, y: 0 });
+  fallingPastPumpkin.startPhysics({ supportY: 100 });
+  for (let frame = 0; frame < 20 && fallingPastPumpkin.physicsActive; frame += 1) {
+    fallingPastPumpkin.stepPhysics(1 / 60, { groundY: 100 });
+  }
+  assert.equal(fallingPastPumpkin.y, 100, 'the pumpkin reaches the floor instead of settling on another pumpkin');
+  assert.equal(fallingPastPumpkin.isAirborne, false);
+});
+
+test('pumpkin released in the air settles at the bottom edge of the scene', () => {
+  const falling = createPhysicsCharacter({ x: 400, y: 600 });
+  falling.startPhysics({ supportY: 1080 });
+  for (let frame = 0; frame < 120 && falling.physicsActive; frame += 1) {
+    falling.stepPhysics(1 / 60, { groundY: 1080 });
+  }
+  assert.equal(falling.y, 1080);
+  assert.equal(falling.isAirborne, false);
+  assert.equal(falling.physicsActive, false);
+});
+
+test('pumpkin follows one parabolic jump, reaches its exact target, and cancels on direct movement', () => {
+  const previousGsap = globalThis.gsap;
+  const timelines = [];
+  globalThis.gsap = {
+    set() {},
+    timeline(options) {
+      const timeline = {
+        options,
+        tweens: [],
+        killed: false,
+        to(target, vars, position) {
+          this.tweens.push({ target, vars, position });
+          return this;
+        },
+        kill() { this.killed = true; },
+      };
+      timelines.push(timeline);
+      return timeline;
+    },
+  };
+  try {
+    const character = createPhysicsCharacter({ x: 100, y: 500, stageSize: 120 });
+    character.actor = {};
+    character.tweens = new Set();
+    character.actionTweens = new Set();
+    character.stopAction = PumpkinCharacter.prototype.stopAction;
+    character.hopTo(700, 500, { speed: 100 });
+
+    const [hop] = timelines;
+    const jump = hop.tweens.find(({ target }) => target !== character.actor);
+    const squashTweens = hop.tweens.filter(({ target }) => target === character.actor);
+    assert.equal(squashTweens.length, 4, 'takeoff and landing each squash then return to normal');
+    const takeoffRelease = squashTweens[1];
+    const landingSquash = squashTweens[2];
+    assert.equal(
+      jump.position,
+      takeoffRelease.position,
+      'the parabolic jump starts with the takeoff squash release',
+    );
+    assert.equal(
+      landingSquash.position,
+      jump.position + jump.vars.duration,
+      'landing compression starts when the flight reaches its target',
+    );
+    assert.equal(jump.vars.ease, 'none', 'linear progress keeps the trajectory parabolic');
+    assert.equal(jump.vars.duration, 6, 'movement duration follows the configured pixels-per-second speed');
+    assert.deepEqual(
+      squashTweens.map(({ vars }) => [vars.scaleX, vars.scaleY]),
+      [[.82, 1.16], [1, 1], [1.18, .84], [1, 1]],
+    );
+    assert.ok(squashTweens[0].vars.duration >= .35, 'stronger takeoff compression remains gradual');
+    assert.ok(squashTweens[1].vars.duration >= .5, 'takeoff release is slower and smooth');
+    assert.ok(squashTweens[2].vars.duration >= .35, 'landing compression remains gradual');
+    assert.ok(squashTweens[3].vars.duration >= .55, 'landing returns slowly to the original shape');
+    assert.ok(squashTweens.every(({ vars }) => vars.ease === 'sine.inOut' || vars.ease === 'sine.out'));
+    jump.target.value = 0.5;
+    jump.vars.onUpdate();
+    assert.equal(character.x, 400, 'the pumpkin moves horizontally through the arc midpoint');
+    assert.ok(character.y < 500, 'the pumpkin reaches the apex halfway through the jump');
+    hop.options.onComplete();
+    assert.equal(character.x, 700);
+    assert.equal(character.y, 500);
+    assert.equal(character.data.x, 700);
+
+    const otherCharacter = createPhysicsCharacter({ x: 200, y: 500, stageSize: 120 });
+    otherCharacter.actor = {};
+    otherCharacter.tweens = new Set();
+    otherCharacter.actionTweens = new Set();
+    otherCharacter.stopAction = PumpkinCharacter.prototype.stopAction;
+    otherCharacter.hopTo(800, 500, { duration: 1.8 });
+    const independentHop = timelines[1];
+    assert.notEqual(independentHop, hop);
+    assert.equal(independentHop.killed, false, 'one character can hop while another is in motion');
+
+    character.hopTo(900, 500, { duration: 1.8 });
+    const interruptedHop = timelines[2];
+    character.moveTo(350, 480, { immediate: true, isAirborne: true });
+    assert.equal(interruptedHop.killed, true);
+    assert.equal(independentHop.killed, false, 'interrupting one character does not cancel another character');
+    assert.equal(character.x, 350);
+    assert.equal(character.y, 480);
+    assert.equal(character.isAirborne, true);
+    otherCharacter.stopAction();
+  } finally {
+    if (previousGsap === undefined) delete globalThis.gsap;
+    else globalThis.gsap = previousGsap;
+  }
+});
+
+test('renderer advances shared physics with requestAnimationFrame and cancels it on cleanup', () => {
+  const previousRequest = globalThis.requestAnimationFrame;
+  const previousCancel = globalThis.cancelAnimationFrame;
+  const callbacks = new Map();
+  let nextFrameId = 0;
+  globalThis.requestAnimationFrame = (callback) => {
+    const id = ++nextFrameId;
+    callbacks.set(id, callback);
+    return id;
+  };
+  globalThis.cancelAnimationFrame = (id) => callbacks.delete(id);
+  try {
+    const renderer = new PumpkinRenderer(null);
+    const frames = [];
+    const character = {
+      physicsActive: true,
+      startPhysics(options) { this.options = options; },
+      stepPhysics(delta, options) { frames.push({ delta, options }); return this.physicsActive; },
+      stopPhysics() { this.physicsActive = false; },
+      stopAction() {},
+      destroy() {},
+    };
+    renderer.characters.set('pumpkin-1', character);
+    renderer.characters.set('support', {
+      x: 70, y: 80, stageSize: 40, physicsActive: false, isAirborne: false,
+      stopPhysics() {}, stopAction() {}, destroy() {},
+    });
+    renderer.startPhysics('pumpkin-1', { groundY: 100 });
+    assert.equal(callbacks.size, 1);
+
+    let [frameId, callback] = callbacks.entries().next().value;
+    callbacks.delete(frameId);
+    callback(1000);
+    [frameId, callback] = callbacks.entries().next().value;
+    callbacks.delete(frameId);
+    callback(1016);
+    assert.equal(frames.length, 2);
+    assert.equal(frames[1].delta, 0.016);
+    assert.deepEqual(frames[1].options, { groundY: 100 }, 'the renderer does not pass other pumpkins as physics supports');
+
+    renderer.stopActions();
+    assert.equal(character.physicsActive, false);
+    assert.equal(callbacks.size, 0);
+    character.physicsActive = true;
+    renderer.startPhysics('pumpkin-1', { groundY: 100 });
+    renderer.clear();
+    assert.equal(callbacks.size, 0);
+    assert.equal(renderer.characters.size, 0);
+    renderer.destroy();
+  } finally {
+    if (previousRequest === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousRequest;
+    if (previousCancel === undefined) delete globalThis.cancelAnimationFrame;
+    else globalThis.cancelAnimationFrame = previousCancel;
+  }
+});
+
+test('renderer restarts physics when an updated pumpkin remains airborne', () => {
+  const previousRequest = globalThis.requestAnimationFrame;
+  const previousCancel = globalThis.cancelAnimationFrame;
+  const callbacks = new Map();
+  globalThis.requestAnimationFrame = (callback) => {
+    const id = callbacks.size + 1;
+    callbacks.set(id, callback);
+    return id;
+  };
+  globalThis.cancelAnimationFrame = (id) => callbacks.delete(id);
+  try {
+    const renderer = new PumpkinRenderer(null);
+    const character = {
+      data: { id: 'pumpkin-1', stage: 1 },
+      x: 0,
+      y: 0,
+      physicsActive: false,
+      setNameVisibility() {},
+      moveTo(x, y) { this.x = x; this.y = y; },
+      startPhysics() { this.physicsActive = true; },
+      stopPhysics() { this.physicsActive = false; },
+      stopAction() {},
+      destroy() {},
+    };
+    renderer.characters.set(character.data.id, character);
+    renderer.update({ id: character.data.id, stage: 1, x: 40, y: 500, isAirborne: true });
+    assert.equal(character.physicsActive, true);
+    assert.equal(callbacks.size, 1);
+    renderer.clear();
+    assert.equal(callbacks.size, 0);
+  } finally {
+    if (previousRequest === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousRequest;
+    if (previousCancel === undefined) delete globalThis.cancelAnimationFrame;
+    else globalThis.cancelAnimationFrame = previousCancel;
+  }
+});
+
+test('renderer hops only for explicit roaming moves and starts physics after an airborne drag ends', () => {
+  const previousRequest = globalThis.requestAnimationFrame;
+  const previousCancel = globalThis.cancelAnimationFrame;
+  const callbacks = new Map();
+  let nextId = 0;
+  globalThis.requestAnimationFrame = (callback) => {
+    const id = ++nextId;
+    callbacks.set(id, callback);
+    return id;
+  };
+  globalThis.cancelAnimationFrame = (id) => callbacks.delete(id);
+  try {
+    const renderer = new PumpkinRenderer(null);
+    const moves = [];
+    const hops = [];
+    const character = {
+      x: 400,
+      y: 900,
+      physicsActive: false,
+      moveTo(x, y, options) {
+        this.x = x;
+        this.y = y;
+        moves.push({ x, y, options });
+      },
+      hopTo(x, y, options) { hops.push({ x, y, options }); },
+      startPhysics(options) { this.physicsActive = true; this.physicsOptions = options; },
+      stopPhysics() { this.physicsActive = false; },
+      stopAction() {},
+      destroy() {},
+    };
+    renderer.characters.set('roamer', character);
+    renderer.applyMove({ id: 'roamer', x: 600, y: 980, sequence: -1, movementType: 'roam', roamingSpeed: 200 });
+    assert.deepEqual(hops, [{ x: 600, y: 980, options: { speed: 200 } }]);
+    assert.equal(moves.length, 0, 'autonomous roaming uses hops, not a smooth glide');
+    renderer.applyMove({ id: 'roamer', x: 610, y: 980, sequence: -1 });
+    assert.equal(hops.length, 1, 'manual moves without the roam marker do not start hop animation');
+    assert.equal(moves.length, 1);
+
+    renderer.finishMove({
+      id: 'roamer', x: 620, y: 980, fromX: 620, fromY: 600,
+      groundY: 980, isAirborne: true,
+    });
+    assert.deepEqual(moves.at(-1), {
+      x: 620, y: 600, options: { immediate: true, isAirborne: true, duration: 0.16 },
+    });
+    assert.equal(character.physicsActive, true);
+    assert.deepEqual(character.physicsOptions, { supportY: 980 });
+    renderer.clear();
+  } finally {
+    if (previousRequest === undefined) delete globalThis.requestAnimationFrame;
+    else globalThis.requestAnimationFrame = previousRequest;
+    if (previousCancel === undefined) delete globalThis.cancelAnimationFrame;
+    else globalThis.cancelAnimationFrame = previousCancel;
+  }
+});
+
+test('admin preview and overlay both use the shared pumpkin renderer', async () => {
+  const admin = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
+  const overlay = await readFile(new URL('../public/js/overlay-app.js', import.meta.url), 'utf8');
+  assert.match(admin, /import \{ PumpkinRenderer \} from '\.\/shared\/pumpkin-renderer\.js/);
+  assert.match(overlay, /import \{ PumpkinRenderer \} from '\.\/shared\/pumpkin-renderer\.js/);
+});
 
 test('shared pumpkin artwork exposes independent reference layers and face parts', async () => {
   const source = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
@@ -63,8 +373,8 @@ test('admin interaction uses the transformed artwork hitbox instead of the shift
   assert.match(svgSource, /mover\.append\(floater, interactionHitbox\)/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \{[\s\S]*pointer-events: none;/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \.interaction-hitbox \{[\s\S]*pointer-events: all;/);
-  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=donation-spawn-20261022"/);
-  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=stage1-face-20261022"/);
+  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=pumpkin-cartoon-squash-20261023"/);
+  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=pumpkin-cartoon-squash-20261023"/);
 });
 
 test('shared character includes smooth idle, face, stem, and cleanup animation hooks', async () => {
@@ -276,6 +586,10 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(source, /eyeFrequency/);
   assert.match(source, /mouthFrequency/);
   assert.match(source, /admin:settings:update/);
+  assert.match(html, /id="roaming-interval-seconds"/);
+  assert.match(html, /id="roaming-speed"/);
+  assert.match(source, /function saveRoamingSettings\(\)/);
+  assert.match(source, /Movement settings saved\./);
   assert.match(source, /setTowerAnimationSettings/); assert.match(source, /towerAnimation/); assert.match(source, /invalid_tower_animation/);
   assert.match(source, /rewardMapping/);
   assert.match(source, /saveRewardMapping/);

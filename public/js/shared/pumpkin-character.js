@@ -19,6 +19,9 @@ const BLINK_DELAY_MIN = 9000;
 const BLINK_DELAY_MAX = 18000;
 const ANIMATION_FREQUENCY_MIN = 0.1;
 const ANIMATION_FREQUENCY_MAX = 10;
+const PHYSICS_STEP_SECONDS = 1 / 60;
+const PHYSICS_MAX_FRAME_SECONDS = 0.05;
+const PHYSICS_GRAVITY = 1800;
 const DEFAULT_ANIMATION = Object.freeze({ eyeFrequency: 1, mouthFrequency: 1 });
 
 /** One independently animated pumpkin. Positioning lives on .mover; idle body motion is below the inert .floater wrapper. */
@@ -49,8 +52,12 @@ export class PumpkinCharacter {
       this._scheduleStageTwoPlantSway();
     });
     this.x = Number(this.data.x) || 0;
-    this.y = Number(this.data.y) || 980;
+    this.y = Number.isFinite(Number(this.data.y)) ? Number(this.data.y) : SCENE_HEIGHT;
     this.isAirborne = Boolean(this.data.isAirborne);
+    this.velocity = { x: 0, y: 0 };
+    this.supportY = this.y;
+    this.physicsAccumulator = 0;
+    this.physicsActive = false;
     this.destroyed = false;
     this.idleStarted = false;
     this.idleTimers = new Set();
@@ -304,7 +311,58 @@ export class PumpkinCharacter {
     return this;
   }
 
+  startPhysics({ velocityX = 0, velocityY = 0, supportY = this.supportY } = {}) {
+    this.stopAction?.();
+    this.velocity.x = Number.isFinite(Number(velocityX)) ? Number(velocityX) : 0;
+    this.velocity.y = Number.isFinite(Number(velocityY)) ? Number(velocityY) : 0;
+    this.supportY = Number.isFinite(Number(supportY)) ? Number(supportY) : this.y;
+    this.physicsAccumulator = 0;
+    this.physicsActive = true;
+    this.isAirborne = true;
+    this.root.classList.add('is-airborne');
+    return this;
+  }
+
+  stepPhysics(elapsedSeconds, { groundY = this.supportY, gravity = PHYSICS_GRAVITY } = {}) {
+    if (!this.physicsActive || this.destroyed) return false;
+    const elapsed = Number(elapsedSeconds);
+    if (!Number.isFinite(elapsed) || elapsed <= 0) return true;
+    this.physicsAccumulator += Math.min(elapsed, PHYSICS_MAX_FRAME_SECONDS);
+    const floor = Number.isFinite(Number(groundY)) ? Number(groundY) : this.supportY;
+    const acceleration = Number.isFinite(Number(gravity)) && Number(gravity) >= 0 ? Number(gravity) : PHYSICS_GRAVITY;
+    while (this.physicsAccumulator >= PHYSICS_STEP_SECONDS) {
+      const previousY = this.y;
+      this.velocity.y += acceleration * PHYSICS_STEP_SECONDS;
+      let nextX = this.x + this.velocity.x * PHYSICS_STEP_SECONDS;
+      let nextY = this.y + this.velocity.y * PHYSICS_STEP_SECONDS;
+      let landingY = nextY >= floor ? floor : null;
+      this.physicsAccumulator -= PHYSICS_STEP_SECONDS;
+      if (landingY !== null) {
+        nextY = landingY;
+        this.velocity = { x: 0, y: 0 };
+        this.physicsAccumulator = 0;
+        this.physicsActive = false;
+        this.isAirborne = false;
+        this.supportY = landingY;
+        this.root.classList.remove('is-airborne');
+        this.data = { ...this.data, x: nextX, y: nextY, isAirborne: false };
+      }
+      this._setPosition(nextX, nextY);
+      if (!this.physicsActive) return false;
+    }
+    return true;
+  }
+
+  stopPhysics() {
+    this.physicsActive = false;
+    this.physicsAccumulator = 0;
+    this.velocity = { x: 0, y: 0 };
+    return this;
+  }
+
   moveTo(x, y, { duration = 0.16, isAirborne = this.isAirborne, immediate = false } = {}) {
+    this.stopPhysics();
+    this.stopAction();
     const gsap = this._gsap();
     if (immediate || !gsap) return this.setPositionImmediate(x, y, isAirborne);
 
@@ -316,6 +374,74 @@ export class PumpkinCharacter {
       x, y, duration, ease: 'power2.out', overwrite: 'auto',
       onUpdate: () => this._setPosition(target.x, target.y),
     }));
+  }
+
+  hopTo(x, y, { duration = null, speed = 140 } = {}) {
+    const targetX = Number.isFinite(Number(x)) ? Number(x) : this.x;
+    const targetY = Number.isFinite(Number(y)) ? Number(y) : this.y;
+    const gsap = this._gsap();
+    if (!gsap || !this.actor) return this.moveTo(targetX, targetY, { duration });
+
+    this.stopPhysics();
+    this.stopAction();
+    const startX = this.x;
+    const startY = this.y;
+    const safeSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0 ? Number(speed) : 140;
+    const distance = Math.hypot(targetX - startX, targetY - startY);
+    const totalDuration = Number.isFinite(Number(duration)) && Number(duration) > 0
+      ? Number(duration)
+      : Math.max(.18, distance / safeSpeed);
+    const hopHeight = Math.max(36, this.stageSize * .42);
+    const takeoffSquashDuration = Math.max(.35, Math.min(.55, totalDuration * .2));
+    const takeoffReleaseDuration = Math.max(.5, Math.min(.7, totalDuration * .25));
+    const landingSquashDuration = Math.max(.35, Math.min(.5, totalDuration * .18));
+    const landingReleaseDuration = Math.max(.55, Math.min(.8, totalDuration * .28));
+    const flightStart = takeoffSquashDuration;
+    const landingStart = flightStart + totalDuration;
+    const progress = { value: 0 };
+    const timeline = gsap.timeline({
+      onComplete: () => {
+        this._setPosition(targetX, targetY);
+        this.data = { ...this.data, x: targetX, y: targetY };
+      },
+    });
+    timeline.to(this.actor, {
+      scaleX: .82,
+      scaleY: 1.16,
+      duration: takeoffSquashDuration,
+      ease: 'sine.inOut',
+    });
+    timeline.to(this.actor, {
+      scaleX: 1,
+      scaleY: 1,
+      duration: takeoffReleaseDuration,
+      ease: 'sine.out',
+    }, flightStart);
+    timeline.to(progress, {
+      value: 1,
+      duration: totalDuration,
+      ease: 'none',
+      onUpdate: () => {
+        const t = progress.value;
+        this._setPosition(
+          startX + (targetX - startX) * t,
+          startY + (targetY - startY) * t - 4 * hopHeight * t * (1 - t),
+        );
+      },
+    }, flightStart);
+    timeline.to(this.actor, {
+      scaleX: 1.18,
+      scaleY: .84,
+      duration: landingSquashDuration,
+      ease: 'sine.inOut',
+    }, landingStart);
+    timeline.to(this.actor, {
+      scaleX: 1,
+      scaleY: 1,
+      duration: landingReleaseDuration,
+      ease: 'sine.out',
+    }, landingStart + landingSquashDuration);
+    return this._trackAction(timeline);
   }
 
   _rebuildArtwork(nextData = this.data) {
@@ -691,7 +817,7 @@ export class PumpkinCharacter {
     return this._trackAction(timeline);
   }
 
-  rollTo(x, y, data = {}, { direction = 0, delay = 0, groundY = 980, fallDuration = .72, rollDuration = 1.15, onComplete } = {}) {
+  rollTo(x, y, data = {}, { direction = 0, delay = 0, groundY = SCENE_HEIGHT, fallDuration = .72, rollDuration = 1.15, onComplete } = {}) {
     const gsap = this._gsap();
     const targetX = Number.isFinite(Number(x)) ? Number(x) : this.x;
     const targetY = Number.isFinite(Number(y)) ? Number(y) : this.y;

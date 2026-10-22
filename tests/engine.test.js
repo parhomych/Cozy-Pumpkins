@@ -15,6 +15,40 @@ import { attachSocketHandlers } from '../src/socket/handlers.js';
 import { OAuthAdapters } from '../src/auth/oauth-adapters.js';
 import { rewardMappingPatch, sanitizeRewardMapping } from '../src/engine/rewards.js';
 import { buildTowerPlan } from '../src/engine/pumpkin-tower.js';
+import { createPumpkinMovementScheduler, findRoamingTarget } from '../src/engine/pumpkin-movement.js';
+import { loadConfig } from '../src/config.js';
+import { DEFAULT_ROAMING_SETTINGS, roamingSettingsPatch } from '../src/engine/roaming-settings.js';
+
+test('ground defaults to the scene bottom and stays within scene bounds', () => {
+  const config = loadConfig({ loadDotenv: false, env: { NODE_ENV: 'test' } });
+  assert.equal(config.scene.groundY, config.scene.height);
+  assert.throws(
+    () => loadConfig({ loadDotenv: false, env: { NODE_ENV: 'test', SCENE_HEIGHT: '500', GROUND_Y: '501' } }),
+    /GROUND_Y must be a valid number/,
+  );
+});
+
+test('saved ground follows config until explicitly overridden', () => {
+  const oldConfig = testConfig({ GROUND_Y: '980' });
+  const newConfig = testConfig();
+  const db = testDatabase(oldConfig);
+  assert.equal(db.getSettings(oldConfig).groundY, 980);
+  assert.equal(db.getSettings(newConfig).groundY, newConfig.scene.height);
+  assert.equal(db.sqlite.prepare('SELECT ground_y_overridden FROM settings WHERE id = 1').get().ground_y_overridden, 0);
+  db.updateSettings({ groundY: 980 }, newConfig);
+  assert.equal(db.getSettings(newConfig).groundY, 980);
+  assert.equal(db.sqlite.prepare('SELECT ground_y_overridden FROM settings WHERE id = 1').get().ground_y_overridden, 1);
+  db.close();
+});
+
+function insertMovementTestPumpkin(db, id, x, y, stage = 1) {
+  return db.insertPumpkin({
+    id, ownerKey: id, ownerNormalized: id, displayName: id, showDisplayName: true,
+    totalDonated: 0, currency: 'RUB', stage, x, y, isAirborne: false,
+    parentId: null, stackOffsetY: null, customization: {},
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  });
+}
 
 test('customization parser accepts the documented command and ignores unknown words', () => {
   const parsed = parseCustomization('  !ТЫКОВКА ведьма рожки хитрые клыки метла неизвестно');
@@ -357,7 +391,8 @@ test('donation spawn randomly overlaps existing pumpkins instead of requiring a 
 
   assert.equal(result.spawned, true);
   const spawnWidth = dimensionsFor(result.pumpkin, { growthMultipliers }).width;
-  assert.equal(result.pumpkin.x, spawnWidth / 2 + (config.scene.width - spawnWidth) * 0.25);
+  const randomSpawnX = spawnWidth / 2 + (config.scene.width - spawnWidth) * 0.25;
+  assert.ok(Math.abs(result.pumpkin.x - randomSpawnX) <= 30, 'the full-coverage safeguard may shift the random spawn by 30 pixels');
   assert.equal(result.pumpkin.y, config.scene.groundY);
   assert.equal(db.listPumpkins().length, 7);
   assert.ok(occupiedPositions.some((other) => {
@@ -450,6 +485,26 @@ test('tower animation settings persist, merge partial updates, and reject unsafe
   db.close();
 });
 
+test('roaming settings have safe defaults, persist, and validate their ranges', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  assert.deepEqual({
+    roamingIntervalSeconds: db.getSettings(config).roamingIntervalSeconds,
+    roamingSpeed: db.getSettings(config).roamingSpeed,
+  }, DEFAULT_ROAMING_SETTINGS);
+  assert.deepEqual(roamingSettingsPatch({ roamingIntervalSeconds: '8', roamingSpeed: '220' }), {
+    roamingIntervalSeconds: 8,
+    roamingSpeed: 220,
+  });
+  assert.throws(() => roamingSettingsPatch({ roamingIntervalSeconds: 0 }), { message: 'invalid_roamingIntervalSeconds' });
+  assert.throws(() => roamingSettingsPatch({ roamingIntervalSeconds: 2.5 }), { message: 'invalid_roamingIntervalSeconds' });
+  assert.throws(() => roamingSettingsPatch({ roamingSpeed: 401 }), { message: 'invalid_roamingSpeed' });
+  db.updateSettings(roamingSettingsPatch({ roamingIntervalSeconds: 8, roamingSpeed: 220 }), config);
+  assert.equal(db.getSettings(config).roamingIntervalSeconds, 8);
+  assert.equal(db.getSettings(config).roamingSpeed, 220);
+  db.close();
+});
+
 test('reward mapping sanitizer accepts supported actions and merges partial updates', () => {
   assert.deepEqual(sanitizeRewardMapping({ inflate: ' reward-1 ', ghost: 'reward-2', unknown: 'ignored' }), { inflate: 'reward-1', ghost: 'reward-2' });
   assert.deepEqual(rewardMappingPatch({ bat: 'reward-3' }, { inflate: 'reward-1' }), { inflate: 'reward-1', bat: 'reward-3' });
@@ -468,9 +523,10 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   assert.deepEqual(db.getSettings(config).animation, { eyeFrequency: 2, mouthFrequency: 3 });
   const ioEvents = [];
   const socketEvents = new Map();
+  const schedulerCalls = [];
   let connection;
   const io = { use() {}, on(event, handler) { if (event === 'connection') connection = handler; }, emit(...args) { ioEvents.push(args); } };
-  attachSocketHandlers(io, { config, db, statuses: { all: () => [] } });
+  attachSocketHandlers(io, { config, db, statuses: { all: () => [] }, movementScheduler: { settingsUpdated: () => schedulerCalls.push('updated') } });
   const socket = { data: { admin: true }, handshake: { headers: {} }, on(event, handler) { socketEvents.set(event, handler); }, emit(...args) { ioEvents.push(['socket', ...args]); } };
   connection(socket);
    socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 2.5 } });
@@ -488,6 +544,13 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
    assert.equal(db.getSettings(config).towerAnimation.stackOrder, 'largest-first');
     socketEvents.get('admin:settings:update')({ towerAnimation: { bendMultiplier: 99 } });
    assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_tower_animation' }]);
+   socketEvents.get('admin:settings:update')({ roamingIntervalSeconds: 7, roamingSpeed: 180 });
+   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
+   assert.equal(ioEvents.at(-1)[1].settings.roamingIntervalSeconds, 7);
+   assert.equal(ioEvents.at(-1)[1].settings.roamingSpeed, 180);
+   assert.deepEqual(schedulerCalls, ['updated']);
+   socketEvents.get('admin:settings:update')({ roamingSpeed: 500 });
+   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_roamingSpeed' }]);
   socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 0 } });
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_animation' }]);
   socketEvents.get('admin:settings:update')({ rewardMapping: { inflate: 'reward-inflate' } });
@@ -877,16 +940,245 @@ test('existing databases migrate name visibility fields with enabled defaults', 
     const donation = new DonationService({ db, config, idFactory: () => 'legacy-name-pumpkin' });
     const result = donation.handle({ id: 'legacy-name-donation', name: 'Legacy Viewer', amount: 100, currency: 'RUB', message: '!тыковка' });
     assert.equal(result.pumpkin.displayName, 'Legacy Viewer');
-    db.sqlite.exec('ALTER TABLE settings DROP COLUMN show_pumpkin_names; ALTER TABLE settings DROP COLUMN pumpkin_name_font_size; ALTER TABLE pumpkins DROP COLUMN show_display_name;');
+    db.sqlite.exec('ALTER TABLE settings DROP COLUMN show_pumpkin_names; ALTER TABLE settings DROP COLUMN pumpkin_name_font_size; ALTER TABLE settings DROP COLUMN roaming_interval_seconds; ALTER TABLE settings DROP COLUMN roaming_speed; ALTER TABLE pumpkins DROP COLUMN show_display_name;');
     db.close();
 
     const legacy = new Database(databasePath);
     assert.equal(legacy.getSettings(config).showPumpkinNames, true);
     assert.equal(legacy.getSettings(config).pumpkinNameFontSize, 14);
+    assert.equal(legacy.getSettings(config).roamingIntervalSeconds, DEFAULT_ROAMING_SETTINGS.roamingIntervalSeconds);
+    assert.equal(legacy.getSettings(config).roamingSpeed, DEFAULT_ROAMING_SETTINGS.roamingSpeed);
     assert.equal(legacy.getPumpkin(result.pumpkin.id).showDisplayName, true);
     assert.equal(legacy.getPumpkin(result.pumpkin.id).displayName, 'Legacy Viewer');
     legacy.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('roaming targets stay on the ground and avoid scene edges and No-Go Zones', () => {
+  const config = testConfig();
+  const pumpkin = { id: 'roamer', stage: 1, x: config.scene.width - 64, y: config.scene.groundY };
+  const context = {
+    scene: config.scene,
+    growthMultipliers: { stage1: 0.58, stage2: 0.82, stage3: 1, stage4: 1.12 },
+    noGoZone: { enabled: true, x: 1300, y: 850, width: 200, height: 120 },
+  };
+  const samples = [0.99, 0.25];
+  const target = findRoamingTarget(pumpkin, [pumpkin], context, { random: () => samples.shift() });
+
+  assert.ok(target);
+  assert.equal(target.y, config.scene.groundY);
+  assert.notEqual(target.x, pumpkin.x);
+  assert.ok(target.x >= 64 && target.x <= config.scene.width - 64);
+  assert.ok(isPositionValid(pumpkin, target.x, target.y, context));
+});
+
+test('roaming pumpkins choose destinations with a minimum offset and avoid No-Go Zones', () => {
+  const config = testConfig();
+  const context = {
+    scene: config.scene,
+    growthMultipliers: { stage1: 0.58, stage2: 0.82, stage3: 1, stage4: 1.12 },
+    noGoZone: { enabled: false },
+  };
+  const first = { id: 'first-roamer', stage: 1, x: 250, y: config.scene.groundY };
+  const second = { id: 'second-roamer', stage: 1, x: 800, y: config.scene.groundY };
+  const firstTarget = findRoamingTarget(first, [first, second], context, { random: () => 0.9 });
+  const movedFirst = { ...first, ...firstTarget };
+  const secondTarget = findRoamingTarget(second, [movedFirst, second], context, { random: () => 0.9 });
+
+  assert.ok(firstTarget);
+  assert.ok(secondTarget);
+  assert.notEqual(firstTarget.x, secondTarget.x);
+  assert.ok(Math.abs(firstTarget.x - secondTarget.x) >= 128);
+  assert.ok(isPositionValid(first, firstTarget.x, firstTarget.y, context));
+  assert.ok(isPositionValid(second, secondTarget.x, secondTarget.y, context));
+});
+
+test('roaming can escape an overlapping spawn by hopping over blockers', () => {
+  const config = testConfig();
+  const context = {
+    scene: config.scene,
+    growthMultipliers: { stage1: 0.58 },
+    noGoZone: { enabled: false },
+  };
+  const pumpkin = { id: 'overlapping-roamer', stage: 1, x: 500, y: config.scene.groundY };
+  const blocker = { id: 'spawn-overlap', stage: 1, x: 500, y: config.scene.groundY };
+  const target = findRoamingTarget(pumpkin, [pumpkin, blocker], context, { random: () => 0.9 });
+
+  assert.ok(target);
+  assert.ok(target.x > pumpkin.x);
+  assert.ok(Math.abs(target.x - blocker.x) >= 30);
+  assert.ok(isPositionValid(pumpkin, target.x, target.y, context));
+});
+
+test('roaming finds a fallback destination when nearby pumpkins block random targets', () => {
+  const config = testConfig();
+  const context = {
+    scene: config.scene,
+    growthMultipliers: { stage1: 0.58 },
+    noGoZone: { enabled: false },
+  };
+  const pumpkin = { id: 'blocked-roamer', stage: 1, x: 500, y: config.scene.groundY };
+  const blockers = [
+    { id: 'left-blocker', stage: 1, x: 500, y: config.scene.groundY },
+    { id: 'right-blocker', stage: 1, x: 500, y: config.scene.groundY },
+  ];
+
+  const target = findRoamingTarget(pumpkin, [pumpkin, ...blockers], context, { random: () => 0.5 });
+
+  assert.ok(target);
+  assert.ok(Math.abs(target.x - pumpkin.x) >= 30);
+  for (const blocker of blockers) assert.ok(Math.abs(target.x - blocker.x) >= 30);
+  assert.ok(isPositionValid(pumpkin, target.x, target.y, context));
+});
+
+test('movement scheduler persists and broadcasts the validated final position', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const pumpkin = insertMovementTestPumpkin(db, 'persisted-roamer', 500, config.scene.groundY);
+  const events = [];
+  const scheduler = createPumpkinMovementScheduler({
+    db,
+    config,
+    broadcast: (event, payload) => events.push([event, payload]),
+    random: () => 0.9,
+  });
+
+  test('movement scheduler keeps moving pumpkins through a crowded scene', () => {
+    const config = testConfig();
+    const db = testDatabase(config);
+    insertMovementTestPumpkin(db, 'roamer-a', 500, config.scene.groundY);
+    insertMovementTestPumpkin(db, 'roamer-b', 500, config.scene.groundY);
+    insertMovementTestPumpkin(db, 'roamer-c', 500, config.scene.groundY);
+    const events = [];
+    const scheduler = createPumpkinMovementScheduler({
+      db,
+      config,
+      broadcast: (event, payload) => events.push([event, payload]),
+      random: () => 0.5,
+    });
+    try {
+      for (let tick = 0; tick < 8; tick += 1) scheduler.tick();
+      assert.equal(events.filter(([event]) => event === 'pumpkin:move').length, 8);
+      const pumpkins = db.listPumpkins();
+      for (let index = 0; index < pumpkins.length; index += 1) {
+        for (const other of pumpkins.slice(index + 1)) {
+          assert.ok(Math.abs(pumpkins[index].x - other.x) >= 30);
+        }
+      }
+    } finally {
+      scheduler.stop();
+      db.close();
+    }
+  });
+
+  try {
+    const target = scheduler.tick();
+    assert.ok(target);
+    assert.deepEqual(
+      { x: db.getPumpkin(pumpkin.id).x, y: db.getPumpkin(pumpkin.id).y },
+      { x: target.x, y: target.y },
+    );
+    assert.deepEqual(events.at(-1), ['pumpkin:move', {
+      id: pumpkin.id, x: target.x, y: target.y, isAirborne: false, sequence: -1, movementType: 'roam', roamingSpeed: DEFAULT_ROAMING_SETTINGS.roamingSpeed,
+    }]);
+  } finally {
+    scheduler.stop();
+    db.close();
+  }
+});
+
+test('movement scheduler applies a changed interval without restarting the server', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const intervals = [];
+  const cleared = [];
+  const scheduler = createPumpkinMovementScheduler({
+    db,
+    config,
+    setIntervalFn: (callback, delay) => {
+      const timer = { callback, delay };
+      intervals.push(timer);
+      return timer;
+    },
+    clearIntervalFn: (timer) => cleared.push(timer),
+  });
+  try {
+    scheduler.start();
+    assert.equal(intervals[0].delay, 5000);
+    db.updateSettings({ roamingIntervalSeconds: 9 }, config);
+    assert.equal(scheduler.settingsUpdated(), true);
+    assert.deepEqual(cleared, [intervals[0]]);
+    assert.equal(intervals[1].delay, 9000);
+    assert.equal(scheduler.stop(), true);
+    assert.deepEqual(cleared, [intervals[0], intervals[1]]);
+  } finally {
+    scheduler.stop();
+    db.close();
+  }
+});
+
+test('manual drags, deletion, and scene clear pause or release roaming state', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const pumpkin = insertMovementTestPumpkin(db, 'socket-roamer', 500, config.scene.groundY);
+  const schedulerCalls = [];
+  const movementScheduler = {
+    pause: (...args) => schedulerCalls.push(['pause', ...args]),
+    resume: (...args) => schedulerCalls.push(['resume', ...args]),
+    remove: (...args) => schedulerCalls.push(['remove', ...args]),
+    reset: () => schedulerCalls.push(['reset']),
+  };
+  const socketEvents = new Map();
+  const ioEvents = [];
+  let connection;
+  const io = {
+    use() {},
+    on(event, handler) { if (event === 'connection') connection = handler; },
+    emit(...args) { ioEvents.push(args); },
+  };
+  attachSocketHandlers(io, { config, db, statuses: { all: () => [] }, movementScheduler });
+  const socket = {
+    id: 'admin-drag-session',
+    data: { admin: true },
+    handshake: { headers: {} },
+    on(event, handler) { socketEvents.set(event, handler); },
+    emit() {},
+  };
+  connection(socket);
+
+  socketEvents.get('admin:pumpkin:move-start')({ id: pumpkin.id, x: 560, y: pumpkin.y });
+  socketEvents.get('admin:pumpkin:move')({ id: pumpkin.id, x: 600, y: pumpkin.y, sequence: 0 });
+  socketEvents.get('admin:pumpkin:move-end')({ id: pumpkin.id, x: 620, y: 600 });
+  assert.deepEqual(schedulerCalls.slice(0, 2), [
+    ['pause', pumpkin.id, socket.id],
+    ['resume', pumpkin.id, socket.id],
+  ]);
+  assert.deepEqual(
+    { x: db.getPumpkin(pumpkin.id).x, y: db.getPumpkin(pumpkin.id).y, isAirborne: db.getPumpkin(pumpkin.id).isAirborne },
+    { x: 620, y: config.scene.groundY, isAirborne: false },
+  );
+  assert.deepEqual(ioEvents.findLast(([event]) => event === 'pumpkin:move-ended')?.[1], {
+    id: pumpkin.id, x: 620, y: config.scene.groundY, fromX: 620, fromY: 600, groundY: config.scene.groundY, isAirborne: true,
+  });
+  assert.deepEqual(
+    ioEvents.filter(([event]) => ['pumpkin:move-ended', 'pumpkin:updated'].includes(event)).map(([event]) => event),
+    ['pumpkin:move-ended'],
+    'the persisted-position sync must not overwrite the active fall',
+  );
+
+  socketEvents.get('admin:pumpkin:move-start')({ id: pumpkin.id, x: 640, y: pumpkin.y });
+  socketEvents.get('disconnect')();
+  assert.deepEqual(schedulerCalls[2], ['pause', pumpkin.id, socket.id]);
+  assert.deepEqual(schedulerCalls[3], ['resume', pumpkin.id, socket.id]);
+  assert.equal(db.getPumpkin(pumpkin.id).x, 640);
+
+  socketEvents.get('admin:pumpkin:delete')({ id: pumpkin.id });
+  assert.deepEqual(schedulerCalls[4], ['remove', pumpkin.id]);
+  insertMovementTestPumpkin(db, 'cleared-roamer', 700, config.scene.groundY);
+  socketEvents.get('admin:pumpkins:clear')({ confirmation: true });
+  assert.deepEqual(schedulerCalls[5], ['reset']);
+  assert.equal(db.listPumpkins().length, 0);
+  db.close();
 });

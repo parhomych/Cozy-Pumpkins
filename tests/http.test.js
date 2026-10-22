@@ -64,6 +64,13 @@ test('server serves status and both user-facing HTML pages without leaking secre
      const updated = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ animation: { eyeFrequency: 2.5, mouthFrequency: 0.5 } }) });
     assert.equal(updated.status, 200);
      assert.deepEqual(JSON.parse(updated.body).settings.animation, { eyeFrequency: 2.5, mouthFrequency: 0.5 });
+     const roaming = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ roamingIntervalSeconds: 8, roamingSpeed: 210 }) });
+     assert.equal(roaming.status, 200);
+     assert.equal(JSON.parse(roaming.body).settings.roamingIntervalSeconds, 8);
+     assert.equal(JSON.parse(roaming.body).settings.roamingSpeed, 210);
+     const invalidRoaming = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ roamingIntervalSeconds: 61 }) });
+     assert.equal(invalidRoaming.status, 400);
+     assert.equal(JSON.parse(invalidRoaming.body).error, 'invalid_roamingIntervalSeconds');
      const tower = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ towerAnimation: { swayAmplitude: 24, swayDuration: 3, lifetimeMinSeconds: 4, lifetimeMaxSeconds: 12, stackOrder: 'largest-first' } }) });
      assert.equal(tower.status, 200);
      assert.deepEqual(JSON.parse(tower.body).settings.towerAnimation, { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 4, lifetimeMaxSeconds: 12, stackOrder: 'largest-first' });
@@ -78,6 +85,8 @@ test('server serves status and both user-facing HTML pages without leaking secre
     assert.equal(JSON.parse(invalidMapping.body).error, 'invalid_reward_mapping');
     const publicRead = await request(port, '/api/settings');
      assert.deepEqual(JSON.parse(publicRead.body).settings.animation, { eyeFrequency: 2.5, mouthFrequency: 0.5 });
+     assert.equal(JSON.parse(publicRead.body).settings.roamingIntervalSeconds, 8);
+     assert.equal(JSON.parse(publicRead.body).settings.roamingSpeed, 210);
      assert.deepEqual(JSON.parse(publicRead.body).settings.towerAnimation, { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 4, lifetimeMaxSeconds: 12, stackOrder: 'largest-first' });
      const invalidTower = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ towerAnimation: { bendMultiplier: 99 } }) });
      assert.equal(invalidTower.status, 400);
@@ -556,6 +565,31 @@ test('server shutdown stops Twitch EventSub and leaves DonationAlerts connected'
     assert.equal(runtime.server.listening, false);
     assert.equal(runtime.statuses.public('twitch').connectionStatus, 'Disconnected');
     assert.equal(runtime.statuses.public('donationalerts').authStatus, 'Connected');
+  } finally {
+    if (runtime.server.listening) await runtime.shutdown();
+    db.close();
+  }
+});
+
+test('server starts its pumpkin movement scheduler and stops it during shutdown', async () => {
+  const db = new Database(':memory:');
+  const runtime = createServer({ config: testConfig(), db, publicDir: null });
+  try {
+    assert.equal(runtime.movementScheduler.running, true);
+    const spawned = runtime.donations.handle({
+      id: 'scheduler-lifecycle-donation',
+      name: 'Scheduler Viewer',
+      amount: 100,
+      currency: 'RUB',
+      message: '!тыковка',
+    }).pumpkin;
+    runtime.broadcast('pumpkin:action', { action: 'pumpkin_tower', lifetimeSeconds: 30 });
+    assert.equal(runtime.movementScheduler.tick(), null);
+    assert.equal(db.getPumpkin(spawned.id).x, spawned.x);
+    await new Promise((resolve) => runtime.server.listen(0, '127.0.0.1', resolve));
+    await runtime.shutdown();
+    assert.equal(runtime.movementScheduler.running, false);
+    assert.equal(runtime.server.listening, false);
   } finally {
     if (runtime.server.listening) await runtime.shutdown();
     db.close();

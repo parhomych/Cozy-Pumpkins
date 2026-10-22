@@ -1,4 +1,4 @@
-import { PumpkinCharacter } from './pumpkin-character.js?v=stage1-face-20261022';
+import { PumpkinCharacter } from './pumpkin-character.js?v=pumpkin-cartoon-squash-20261023';
 
 const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
 const DEFAULT_PUMPKIN_NAME_FONT_SIZE = 14;
@@ -10,13 +10,15 @@ function normalizePumpkinNameFontSize(size) {
 export class PumpkinRenderer {
   constructor(container, { interactive = false, onSelect = null, settings = null } = {}) {
     this.container = container; this.interactive = interactive; this.onSelect = onSelect; this.settings = { showPumpkinNames: true, pumpkinNameFontSize: DEFAULT_PUMPKIN_NAME_FONT_SIZE, ...(settings || {}) }; this.settings.pumpkinNameFontSize = normalizePumpkinNameFontSize(this.settings.pumpkinNameFontSize); this.characters = new Map(); this.sequence = new Map();
-    this.container?.classList.add('pumpkin-layer'); this.towerTimers = new Set(); this.towerTweens = new Set(); this.towerMotion = null; this.towerParticipants = []; this.towerPayload = {}; this.towerSwayActive = false; this.towerRoll = null;
+    this.container?.classList.add('pumpkin-layer'); this.towerTimers = new Set(); this.towerTweens = new Set(); this.towerMotion = null; this.towerParticipants = []; this.towerPayload = {}; this.towerSwayActive = false; this.towerRoll = null; this.physicsFrame = null; this.lastPhysicsFrameTime = null;
   }
   add(pumpkin, { immediate = true } = {}) {
     if (!pumpkin?.id) return null;
     if (this.characters.has(pumpkin.id)) return this.update(pumpkin, { immediate });
     const character = new PumpkinCharacter(pumpkin, { positioning: 'scene', interactive: this.interactive, animationSettings: this.settings.animation, growthMultipliers: this.settings.growthMultipliers, showPumpkinNames: this.settings.showPumpkinNames, pumpkinNameFontSize: this.settings.pumpkinNameFontSize, onPointerDown: (data, event) => this.onSelect?.(data.id, data, event) });
-    this.characters.set(pumpkin.id, character); this.sequence.set(pumpkin.id, -1); this.container?.append(character.root); character.startIdle(); return character;
+    this.characters.set(pumpkin.id, character); this.sequence.set(pumpkin.id, -1); this.container?.append(character.root); character.startIdle();
+    if (pumpkin.isAirborne) this.startPhysics(pumpkin.id);
+    return character;
   }
   update(pumpkin, { immediate = false } = {}) {
     const character = this.characters.get(pumpkin?.id); if (!character) return this.add(pumpkin, { immediate: true });
@@ -25,7 +27,10 @@ export class PumpkinRenderer {
     character.setNameVisibility(this.settings.showPumpkinNames);
     if (pumpkin.customization) character.applyCustomization(pumpkin.customization);
     if (pumpkin.stage !== undefined && Number(pumpkin.stage) !== Number(previousStage)) character.evolve(pumpkin.stage);
-    character.moveTo(pumpkin.x, pumpkin.y, { immediate, isAirborne: pumpkin.isAirborne }); return character;
+    this.stopPhysics(pumpkin.id);
+    character.moveTo(pumpkin.x, pumpkin.y, { immediate, isAirborne: pumpkin.isAirborne });
+    if (pumpkin.isAirborne) this.startPhysics(pumpkin.id);
+    return character;
   }
   setNameFontSize(size) {
     this.settings.pumpkinNameFontSize = normalizePumpkinNameFontSize(size);
@@ -42,13 +47,105 @@ export class PumpkinRenderer {
     if (this.towerRoll) this.scheduleTowerRoll();
     return this;
   }
-  setPosition(id, x, y, { immediate = false, isAirborne } = {}) { const character = this.characters.get(id); if (!character) return; character.moveTo(x, y, { immediate, isAirborne }); }
-  applyMove(payload, { immediate = false } = {}) { if (!payload?.id) return; const next = Number(payload.sequence); const previous = this.sequence.get(payload.id) ?? -1; if (Number.isFinite(next) && next < previous) return; if (Number.isFinite(next)) this.sequence.set(payload.id, next); this.setPosition(payload.id, payload.x, payload.y, { immediate, isAirborne: payload.isAirborne }); }
-  finishMove(payload) { if (!payload?.id) return; this.setPosition(payload.id, payload.x, payload.y, { immediate: false, isAirborne: payload.isAirborne }); this.sequence.set(payload.id, -1); }
+  setPosition(id, x, y, { immediate = false, isAirborne, simulatePhysics = true, duration = 0.16, groundY } = {}) {
+    const character = this.characters.get(id);
+    if (!character) return;
+    this.stopPhysics(id);
+    const startPhysics = simulatePhysics && isAirborne;
+    character.moveTo(x, y, { immediate: immediate || startPhysics, isAirborne, duration });
+    if (startPhysics) this.startPhysics(id, { groundY });
+  }
+  applyMove(payload, { immediate = false } = {}) {
+    if (!payload?.id) return;
+    const next = Number(payload.sequence);
+    const previous = this.sequence.get(payload.id) ?? -1;
+    if (Number.isFinite(next) && next < previous) return;
+    if (Number.isFinite(next)) this.sequence.set(payload.id, next);
+    const durationMs = Number(payload.durationMs);
+    const duration = Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : 0.16;
+    if (!immediate && payload.isAirborne !== true && payload.movementType === 'roam') {
+      const character = this.characters.get(payload.id);
+      if (character?.hopTo) {
+        this.stopPhysics(payload.id);
+        character.hopTo(payload.x, payload.y, { speed: payload.roamingSpeed ?? this.settings.roamingSpeed });
+        return;
+      }
+    }
+    this.setPosition(payload.id, payload.x, payload.y, {
+      immediate,
+      isAirborne: payload.isAirborne,
+      duration,
+      groundY: payload.groundY,
+    });
+  }
+  finishMove(payload) {
+    if (!payload?.id) return;
+    if (payload.isAirborne) {
+      const character = this.characters.get(payload.id);
+      const x = Number.isFinite(Number(payload.fromX)) ? Number(payload.fromX) : character?.x;
+      const y = Number.isFinite(Number(payload.fromY)) ? Number(payload.fromY) : character?.y;
+      this.setPosition(payload.id, x, y, { immediate: true, isAirborne: true, simulatePhysics: false });
+      this.startPhysics(payload.id, { groundY: payload.groundY });
+    } else {
+      this.setPosition(payload.id, payload.x, payload.y, { immediate: true, isAirborne: false });
+    }
+    this.sequence.set(payload.id, -1);
+  }
+  startPhysics(id, options = {}) {
+    const character = this.characters.get(id);
+    if (!character?.startPhysics) return false;
+    const requestedGroundY = options.groundY;
+    const configuredGroundY = this.settings.groundY;
+    const groundY = requestedGroundY != null && Number.isFinite(Number(requestedGroundY))
+      ? Number(requestedGroundY)
+      : configuredGroundY != null && Number.isFinite(Number(configuredGroundY)) ? Number(configuredGroundY) : 1080;
+    const { groundY: _groundY, ...physicsOptions } = options;
+    character.physicsGroundY = groundY;
+    character.startPhysics({ ...physicsOptions, supportY: groundY });
+    this._schedulePhysicsFrame();
+    return true;
+  }
+  stopPhysics(id = null) {
+    const characters = id === null
+      ? this.characters.values()
+      : [this.characters.get(id)].filter(Boolean);
+    for (const character of characters) character.stopPhysics?.();
+    if (![...this.characters.values()].some((character) => character.physicsActive)) this._cancelPhysicsFrame();
+  }
+  _schedulePhysicsFrame() {
+    if (this.physicsFrame !== null) return;
+    if (typeof globalThis.requestAnimationFrame !== 'function') {
+      throw new Error('requestAnimationFrame is required to run pumpkin physics');
+    }
+    this.physicsFrame = globalThis.requestAnimationFrame((timestamp) => this._advancePhysicsFrame(timestamp));
+  }
+  _advancePhysicsFrame(timestamp) {
+    this.physicsFrame = null;
+    const now = Number(timestamp);
+    const elapsedSeconds = this.lastPhysicsFrameTime === null || !Number.isFinite(now)
+      ? 0
+      : Math.max(0, (now - this.lastPhysicsFrameTime) / 1000);
+    this.lastPhysicsFrameTime = Number.isFinite(now) ? now : null;
+    for (const character of this.characters.values()) {
+      if (!character.physicsActive) continue;
+      character.stepPhysics?.(elapsedSeconds, {
+        groundY: character.physicsGroundY ?? character.supportY,
+      });
+    }
+    if ([...this.characters.values()].some((character) => character.physicsActive)) this._schedulePhysicsFrame();
+    else this.lastPhysicsFrameTime = null;
+  }
+  _cancelPhysicsFrame() {
+    if (this.physicsFrame !== null) {
+      globalThis.cancelAnimationFrame?.(this.physicsFrame);
+      this.physicsFrame = null;
+    }
+    this.lastPhysicsFrameTime = null;
+  }
   remove(id, { animate = true } = {}) { const character = this.characters.get(id); if (!character) return; this.stopActions(); this.characters.delete(id); this.sequence.delete(id); if (animate) character.disappear(() => character.destroy()); else character.destroy(); }
   clear() { this.stopActions(); for (const id of [...this.characters.keys()]) this.remove(id, { animate: false }); }
   stopTowerMotion() { for (const tween of this.towerTweens) tween.kill?.(); this.towerTweens.clear(); this.towerMotion = null; this.towerSwayActive = false; }
-  stopActions() { for (const timer of this.towerTimers) clearTimeout(timer); this.towerTimers.clear(); this.towerRoll = null; this.stopTowerMotion(); for (const character of this.characters.values()) character.stopAction?.(); }
+  stopActions() { for (const timer of this.towerTimers) clearTimeout(timer); this.towerTimers.clear(); this.towerRoll = null; this.stopTowerMotion(); this.stopPhysics(); for (const character of this.characters.values()) character.stopAction?.(); }
   startTowerSway(participants = [], payload = {}) {
     const gsap = globalThis.gsap || globalThis.window?.gsap;
     if (!gsap || !participants.length) return;
@@ -155,7 +252,7 @@ export class PumpkinRenderer {
         this.characters.get(pumpkin?.id)?.rollTo?.(pumpkin.x, pumpkin.y, pumpkin, {
           direction,
           delay,
-          groundY: Number.isFinite(Number(pumpkin.y)) ? Number(pumpkin.y) : Number.isFinite(Number(roll.payload.groundY)) ? Number(roll.payload.groundY) : 980,
+          groundY: Number.isFinite(Number(pumpkin.y)) ? Number(pumpkin.y) : Number.isFinite(Number(roll.payload.groundY)) ? Number(roll.payload.groundY) : 1080,
         });
       }
     }, Math.max(0, deadline - Date.now()));

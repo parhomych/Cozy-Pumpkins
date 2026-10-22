@@ -5,10 +5,10 @@ import crypto from 'node:crypto';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-function numberFromEnv(env, name, fallback, { integer = false, min = -Infinity } = {}) {
+function numberFromEnv(env, name, fallback, { integer = false, min = -Infinity, max = Infinity } = {}) {
   const value = env[name] === undefined || env[name] === '' ? fallback : Number(env[name]);
-  if (!Number.isFinite(value) || value < min || (integer && !Number.isInteger(value))) {
-    throw new Error(`${name} must be a valid ${integer ? 'integer' : 'number'} >= ${min}`);
+  if (!Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+    throw new Error(`${name} must be a valid ${integer ? 'integer' : 'number'} between ${min} and ${max}`);
   }
   return value;
 }
@@ -31,7 +31,7 @@ export function loadConfig({ env = process.env, loadDotenv = true } = {}) {
     scene: {
       width: sceneWidth,
       height: sceneHeight,
-      groundY: numberFromEnv(env, 'GROUND_Y', 980, { min: 0 }),
+      groundY: numberFromEnv(env, 'GROUND_Y', sceneHeight, { min: 0, max: sceneHeight }),
       padding: numberFromEnv(env, 'PUMPKIN_PADDING', 65, { min: 0 }),
     },
     pumpkinCurrency: (env.PUMPKIN_CURRENCY || 'RUB').trim().toUpperCase(),

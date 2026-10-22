@@ -37,6 +37,7 @@ function layoutAtX(ordered, x, context) {
   const compression = desiredSteps > 0 ? Math.min(1, availableHeight / desiredSteps) : 1;
   const participants = [];
   let y = groundY;
+  let supportingPumpkinId = null;
 
   for (let index = 0; index < ordered.length; index += 1) {
     const pumpkin = ordered[index];
@@ -48,7 +49,10 @@ function layoutAtX(ordered, x, context) {
       fromY: pumpkin.y,
       towerX: x,
       towerY: y,
+      supportY: y,
+      supportingPumpkinId,
     });
+    supportingPumpkinId = pumpkin.id;
     if (index < ordered.length - 1) y -= heights[index] * TOWER_STEP_RATIO * compression;
   }
 

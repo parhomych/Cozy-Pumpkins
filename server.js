@@ -11,6 +11,7 @@ import { IntegrationStatus } from './src/integrations/status.js';
 import { OAuthAdapters } from './src/auth/oauth-adapters.js';
 import { DonationService } from './src/engine/donations.js';
 import { RewardService } from './src/engine/rewards.js';
+import { createPumpkinMovementScheduler } from './src/engine/pumpkin-movement.js';
 import { TwitchApiClient } from './src/integrations/twitch-api.js';
 import { TwitchEventSub } from './src/integrations/twitch-eventsub.js';
 import { DonationAlertsEvents } from './src/integrations/donationalerts-events.js';
@@ -30,6 +31,7 @@ export function createApp({ config = loadConfig(), db = null, logger = createLog
   const app = express(); app.disable('x-powered-by'); app.use(sessionMiddleware({ secret: config.sessionSecret }));
   const broadcaster = { current: () => {} };
   const broadcast = (event, payload) => broadcaster.current(event, payload);
+  const movementSchedulerRef = { current: null };
   const donations = new DonationService({ db: database, config, logger, emit: broadcast });
   const rewards = new RewardService({ db: database, config, logger, emit: broadcast });
   const twitchApi = new TwitchApiClient({ config, tokenStore, fetchImpl });
@@ -48,8 +50,8 @@ export function createApp({ config = loadConfig(), db = null, logger = createLog
     donatex: new DonatExEvents({ ...providerEventFactories.donatex, oauth, statuses, onDonation: (event) => donations.handle(event), logger }),
     memealerts: new MemeAlertsEvents({ ...providerEventFactories.memealerts, oauth, tokenStore, statuses, onDonation: (event) => donations.handle(event), fetchImpl, websocket: WebSocketImpl, logger }),
   };
-  app.locals.cozyPumpkins = { config, db: database, tokenStore, statuses, oauth, donations, rewards, twitchApi, twitchEventSub, providerEvents, broadcast, setBroadcast: (fn) => { broadcaster.current = fn; } };
-  app.use('/api', createApiRouter({ config, db: database, statuses, oauth, tokenStore, donations, rewards, twitchApi, twitchEventSub, providerEvents, broadcast, logger, publicDir: null }));
+  app.locals.cozyPumpkins = { config, db: database, tokenStore, statuses, oauth, donations, rewards, twitchApi, twitchEventSub, providerEvents, broadcast, setBroadcast: (fn) => { broadcaster.current = fn; }, setMovementScheduler: (scheduler) => { movementSchedulerRef.current = scheduler; } };
+  app.use('/api', createApiRouter({ config, db: database, statuses, oauth, tokenStore, donations, rewards, twitchApi, twitchEventSub, providerEvents, broadcast, onMovementSettingsUpdated: () => movementSchedulerRef.current?.settingsUpdated(), logger, publicDir: null }));
   if (publicDir) app.use(express.static(publicDir, { index: false }));
   app.use((error, req, res, next) => { if (error?.type === 'entity.too.large') return res.status(413).json({ error: 'payload_too_large' }); if (res.headersSent) return next(error); logger.error('Unhandled HTTP error', { reason: error?.message }); return res.status(500).json({ error: 'internal_error' }); });
   if (io) { broadcaster.current = (event, payload) => io.emit(event, payload); attachSocketHandlers(io, { config, db: database, statuses, logger }); }
@@ -58,9 +60,39 @@ export function createApp({ config = loadConfig(), db = null, logger = createLog
 
 export function createServer(options = {}) {
   const config = options.config || loadConfig(); const app = createApp({ ...options, config }); const server = http.createServer(app); const io = new SocketIOServer(server, { cors: { origin: false } });
-  const cozy = app.locals.cozyPumpkins; const broadcast = (event, payload) => io.emit(event, payload); cozy.setBroadcast(broadcast); cozy.broadcast = broadcast; cozy.donations.emit = broadcast; cozy.rewards.emit = broadcast;
-  attachSocketHandlers(io, { config, db: cozy.db, statuses: cozy.statuses, logger: options.logger || createLogger() });
+  const cozy = app.locals.cozyPumpkins;
+  const logger = options.logger || createLogger();
+  const movementScheduler = createPumpkinMovementScheduler({
+    db: cozy.db,
+    config,
+    broadcast: (event, payload) => io.emit(event, payload),
+    onError: (error) => logger.error('Pumpkin movement scheduler failed', { reason: error?.message }),
+  });
+  cozy.setMovementScheduler(movementScheduler);
+  let towerResumeTimer = null;
+  const broadcast = (event, payload) => {
+    if (event === 'pumpkin:action' && payload?.action === 'pumpkin_tower') {
+      movementScheduler.pauseAll();
+      clearTimeout(towerResumeTimer);
+      towerResumeTimer = setTimeout(() => {
+        towerResumeTimer = null;
+        movementScheduler.resumeAll();
+      }, (Math.max(0, Number(payload.lifetimeSeconds) || 0) + 3) * 1000);
+      towerResumeTimer.unref?.();
+    }
+    io.emit(event, payload);
+  };
+  const stopMovement = () => {
+    movementScheduler.stop();
+    clearTimeout(towerResumeTimer);
+    towerResumeTimer = null;
+  };
+  server.once('close', stopMovement);
+  cozy.setBroadcast(broadcast); cozy.broadcast = broadcast; cozy.donations.emit = broadcast; cozy.rewards.emit = broadcast;
+  attachSocketHandlers(io, { config, db: cozy.db, statuses: cozy.statuses, logger, movementScheduler });
+  movementScheduler.start();
   const shutdown = async () => {
+    stopMovement();
     const results = await Promise.allSettled([
       cozy.twitchEventSub.stop(),
       ...Object.values(cozy.providerEvents).map((client) => client.stop()),
@@ -69,7 +101,7 @@ export function createServer(options = {}) {
     const failures = results.filter((result) => result.status === 'rejected').map((result) => result.reason);
     if (failures.length) throw new AggregateError(failures, 'One or more provider integrations failed to stop.');
   };
-  return { app, server, io, config, ...cozy, shutdown };
+  return { app, server, io, config, ...cozy, movementScheduler, shutdown };
 }
 
 export async function startServer(options = {}) {

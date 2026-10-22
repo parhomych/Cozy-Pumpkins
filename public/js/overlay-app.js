@@ -1,4 +1,4 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=stage1-face-20261022';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=pumpkin-cartoon-squash-20261023';
 
 const connectionPill = document.querySelector('#connection-state');
 const canvas = document.querySelector('#overlay-scene');
