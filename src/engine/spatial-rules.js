@@ -66,10 +66,29 @@ export function clampPosition(pumpkin, x, y, context) {
   }
   return { x: Math.max(minX, Math.min(maxX, candidate.x)), y: maxY };
 }
-export function findSpawnPosition(pumpkin, pumpkins, context) {
-  const size = dimensionsFor(pumpkin, context); const y = context.scene.groundY ?? context.scene.height - context.scene.padding; const step = size.width + context.scene.padding;
-  for (let x = size.width / 2; x <= context.scene.width - size.width / 2; x += step) {
-    if (isPositionValid(pumpkin, x, y, context) && !pumpkins.some((other) => rectanglesOverlap(artworkBounds(pumpkin, x, y, context), artworkBounds(other, other.x, other.y, context)))) return { x, y };
+export function findSpawnPosition(pumpkin, pumpkins, context, random = Math.random) {
+  const size = dimensionsFor(pumpkin, context);
+  const y = context.scene.groundY ?? context.scene.height - context.scene.padding;
+  const minX = size.width / 2;
+  const maxX = context.scene.width - size.width / 2;
+  const randomValue = Number(random());
+  const randomFraction = Number.isFinite(randomValue) ? Math.max(0, Math.min(0.999999, randomValue)) : 0.5;
+  const initialX = minX + (maxX - minX) * randomFraction;
+  const candidateCount = Math.ceil((maxX - minX) / 30);
+  for (let offset = 0; offset <= candidateCount * 30; offset += 30) {
+    const candidates = offset === 0 ? [initialX] : [initialX + offset, initialX - offset];
+    for (const x of candidates) {
+      if (x < minX || x > maxX || !isPositionValid(pumpkin, x, y, context)) continue;
+      const spawnBounds = artworkBounds(pumpkin, x, y, context);
+      const completelyCovered = pumpkins.some((other) => {
+        const otherBounds = artworkBounds(other, other.x, other.y, context);
+        return otherBounds.left <= spawnBounds.left
+          && otherBounds.right >= spawnBounds.right
+          && otherBounds.top <= spawnBounds.top
+          && otherBounds.bottom >= spawnBounds.bottom;
+      });
+      if (!completelyCovered) return { x, y };
+    }
   }
   return null;
 }

@@ -37,7 +37,7 @@ Set each redirect URI to the URL registered with that provider; the defaults sho
 
 DonationAlerts and Meme Alerts logout disconnects and deletes the local token; it does not claim that the provider revoked access remotely. DonatEx remote revocation is reported only when the provider confirms it. The Twitch login and Channel Points controls remain independent of donation connections.
 
-In **Donation spawn and growth rules**, set the minimum donation in the configured scene currency and the command required at the start of a message. Defaults are `0` and `!тыковка`. New viewers need one same-currency donation meeting the threshold plus the command to create a pumpkin; listed Russian/English customization keywords after the command set its appearance. Existing owners' same-currency donations continue to grow their pumpkin without the command. Other currencies are not converted or counted.
+In **Donation spawn and growth rules**, set the minimum donation in the configured scene currency and the command required at the start of a message. Defaults are `0` and `!тыковка`. New viewers need one same-currency donation meeting the threshold plus the command to create a pumpkin; listed Russian/English customization keywords after the command set its appearance. If no customization keyword is recognized, eyes and mouth are chosen randomly. New pumpkins spawn at a random horizontal position along the scene's ground line and may overlap existing ones; if one would be completely hidden by another, its position shifts by 30 logical pixels until visible. They remain within the scene and outside the No-Go Zone. Existing owners' same-currency donations continue to grow their pumpkin without the command. Other currencies are not converted or counted.
 
 The same section shows four isolated pumpkin previews and cumulative donor-total thresholds for stages two through four. Defaults are `300`, `1000`, and `3000` in the scene currency. Values must be finite, non-negative, and strictly increasing. These saved thresholds control donation-driven evolution and are separate from the minimum amount for creating a pumpkin. Dense integration, scene, reward, and inspector controls can be collapsed without clearing their current values. The **Live preview** stays visible in a responsive 16:9 frame.
 
@@ -73,6 +73,7 @@ npm run check
 - Twitch rewards are matched by exact reward ID; ordinary actions run only for the pumpkin linked to the redeeming viewer, while the global Pumpkin tower action intentionally affects every active pumpkin.
 - Twitch logout uses the official revoke endpoint and reports success only after the provider confirms it. DonationAlerts logout is explicitly local unless a documented remote revoke mechanism is verified.
 - OAuth client secrets, access/refresh tokens, and realtime channel tokens are never exposed to browser payloads or normal logs.
+- The server console logs normalized donation provider, amount, currency, and processing outcome or ignore reason; donor names and message text are excluded.
 - Offline verification uses mocked provider API, WebSocket, and SignalR responses; `make test` does not require provider credentials or a network connection.
 
 ## Project layout

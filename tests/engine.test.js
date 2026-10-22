@@ -103,6 +103,67 @@ test('donation processing creates, evolves, and deduplicates a pumpkin', () => {
   db.close();
 });
 
+test('a bare spawn command creates a pumpkin with randomized eyes and mouth', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const randomValues = [0.4, 0.8, 0.25];
+  const service = new DonationService({
+    db,
+    config,
+    idFactory: () => 'bare-command-pumpkin',
+    random: () => randomValues.shift(),
+  });
+
+  const result = service.handle({
+    provider: 'donationalerts',
+    id: 'bare-command-donation',
+    name: 'Bare Command Viewer',
+    amount: 10,
+    currency: 'RUB',
+    message: '!тыковка',
+  });
+
+  assert.equal(result.spawned, true);
+  assert.equal(result.pumpkin.customization.eyes, 'stars');
+  assert.equal(result.pumpkin.customization.mouth, 'o');
+  const spawnWidth = dimensionsFor({ stage: 1 }, db.getSettings(config).growthMultipliers).width;
+  assert.equal(result.pumpkin.x, spawnWidth / 2 + (config.scene.width - spawnWidth) * 0.25);
+  assert.equal(result.pumpkin.y, config.scene.groundY);
+  db.close();
+});
+
+test('donation logs identify ignored reasons without logging donor names or messages', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  db.updateSettings({ minSpawnDonation: 100 }, config);
+  const logs = [];
+  const service = new DonationService({
+    db,
+    config,
+    logger: {
+      info: (message, metadata) => logs.push({ level: 'info', message, metadata }),
+      warn: (message, metadata) => logs.push({ level: 'warn', message, metadata }),
+    },
+  });
+
+  const result = service.handle({
+    provider: 'donationalerts',
+    id: 'ignored-logged-donation',
+    name: 'Private Donor Name',
+    amount: 50,
+    currency: 'RUB',
+    message: '!тыковка private message',
+  });
+
+  assert.equal(result.reason, 'spawn_threshold_not_met');
+  assert.deepEqual(logs.map(({ message }) => message), ['Donation event received', 'Donation event ignored']);
+  assert.equal(logs[1].metadata.reason, 'spawn_threshold_not_met');
+  assert.equal(logs[1].metadata.minimumAmount, 100);
+  assert.equal(JSON.stringify(logs).includes('Private Donor Name'), false);
+  assert.equal(JSON.stringify(logs).includes('private message'), false);
+  db.close();
+});
+
 test('donation processing applies persisted cumulative growth thresholds', () => {
   const config = testConfig();
   const db = testDatabase(config);
@@ -252,6 +313,94 @@ test('new pumpkin spawn is refused when no safe scene position exists and mismat
   assert.equal(wrongCurrency.currencyApplied, false);
   assert.equal(wrongCurrency.pumpkin, null);
   assert.equal(events.length, 0);
+  db.close();
+});
+
+test('donation spawn randomly overlaps existing pumpkins instead of requiring a free zone', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  const growthMultipliers = { stage1: 0.9, stage2: 0.95, stage3: 1.09, stage4: 1.1 };
+  db.updateSettings({ minSpawnDonation: 100, growthMultipliers }, config);
+  const occupiedPositions = [
+    { stage: 4, x: 291.8297161936561, y: 1054.3239227340268 },
+    { stage: 4, x: 543.7362270450751, y: 1080 },
+    { stage: 4, x: 846.9282136894825, y: 1080 },
+    { stage: 2, x: 1141.8522537562606, y: 1046.3001485884101 },
+    { stage: 1, x: 1434.2404006677796, y: 1080 },
+    { stage: 1, x: 1615.7762938230383, y: 1080 },
+  ];
+  occupiedPositions.forEach((position, index) => db.insertPumpkin({
+    id: `occupied-${index}`,
+    ownerKey: `occupied-${index}`,
+    ownerNormalized: `occupied ${index}`,
+    displayName: `Occupied ${index}`,
+    totalDonated: 0,
+    currency: 'RUB',
+    ...position,
+    isAirborne: false,
+    parentId: null,
+    stackOffsetY: null,
+    customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }));
+  const service = new DonationService({ db, config, idFactory: () => 'gap-spawned-pumpkin', random: () => 0.25 });
+
+  const result = service.handle({
+    provider: 'donationalerts',
+    id: 'gap-spawn-donation',
+    name: 'Gap Viewer',
+    amount: 250,
+    currency: 'RUB',
+    message: '!тыковка',
+  });
+
+  assert.equal(result.spawned, true);
+  const spawnWidth = dimensionsFor(result.pumpkin, { growthMultipliers }).width;
+  assert.equal(result.pumpkin.x, spawnWidth / 2 + (config.scene.width - spawnWidth) * 0.25);
+  assert.equal(result.pumpkin.y, config.scene.groundY);
+  assert.equal(db.listPumpkins().length, 7);
+  assert.ok(occupiedPositions.some((other) => {
+    const centerDifference = Math.abs(result.pumpkin.x - other.x);
+    return centerDifference < (spawnWidth + dimensionsFor(other, { growthMultipliers }).width) / 2;
+  }));
+  db.close();
+});
+
+test('random donation spawn shifts 30 pixels when it would fully cover a pumpkin', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  db.insertPumpkin({
+    id: 'centered-pumpkin',
+    ownerKey: 'centered-pumpkin',
+    ownerNormalized: 'centered pumpkin',
+    displayName: 'Centered Pumpkin',
+    totalDonated: 0,
+    currency: 'RUB',
+    stage: 1,
+    x: config.scene.width / 2,
+    y: config.scene.groundY,
+    isAirborne: false,
+    parentId: null,
+    stackOffsetY: null,
+    customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const service = new DonationService({ db, config, idFactory: () => 'shifted-pumpkin', random: () => 0.5 });
+
+  const result = service.handle({
+    provider: 'donationalerts',
+    id: 'shifted-spawn-donation',
+    name: 'Shifted Viewer',
+    amount: 100,
+    currency: 'RUB',
+    message: '!тыковка',
+  });
+
+  assert.equal(result.spawned, true);
+  assert.equal(result.pumpkin.x, config.scene.width / 2 + 30);
+  assert.equal(result.pumpkin.y, config.scene.groundY);
   db.close();
 });
 

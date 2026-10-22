@@ -63,7 +63,7 @@ test('admin interaction uses the transformed artwork hitbox instead of the shift
   assert.match(svgSource, /mover\.append\(floater, interactionHitbox\)/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \{[\s\S]*pointer-events: none;/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \.interaction-hitbox \{[\s\S]*pointer-events: all;/);
-  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=stage1-face-20261022"/);
+  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=donation-spawn-20261022"/);
   assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=stage1-face-20261022"/);
 });
 
@@ -311,6 +311,8 @@ test('spawn rule controls and read-only keyword previews stay isolated from the 
   assert.match(source, /loadSpawnSettings/);
   assert.match(source, /customizationCatalog/);
   assert.match(source, /message: state\.settings\.spawnCommand/);
+  assert.match(source, /Test donation ignored: \$\{reasons\[result\.reason\]/);
+  assert.match(source, /if \(result\?\.pumpkin\) upsertPumpkin\(result\.pumpkin\)/);
   const start = source.indexOf('function renderCustomizationCatalog(');
   const end = source.indexOf('\nfunction ', start + 1);
   assert.notEqual(start, -1);

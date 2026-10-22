@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { normalizeName, normalizeText, finiteNumber, safeId } from '../utils/normalize.js';
-import { DEFAULT_CUSTOMIZATION, parseCustomization, sanitizeCustomization } from './customization-parser.js';
+import { CUSTOMIZATION_ALIASES, DEFAULT_CUSTOMIZATION, parseCustomization, sanitizeCustomization } from './customization-parser.js';
 import { findSpawnPosition, isPositionValid } from './spatial-rules.js';
 import { DEFAULT_GROWTH_STAGES } from './growth-stages.js';
 
@@ -37,13 +37,20 @@ function parseDonation(raw) {
     : ownerId ? `${provider}:${ownerId}` : `name:${provider}:${ownerNormalized}`;
   return { provider, eventId, displayName, ownerId, ownerNormalized, ownerKey, amount, currency, message };
 }
+function randomChoice(values, random) {
+  const value = Number(random?.());
+  const index = Number.isFinite(value) ? Math.max(0, Math.min(0.999999, value)) : 0.5;
+  return values[Math.floor(index * values.length)];
+}
 export class DonationService {
-  constructor({ db, config, logger = console, emit = () => {}, idFactory = () => crypto.randomUUID(), now = () => new Date() } = {}) { Object.assign(this, { db, config, logger, emit, idFactory, now }); }
+  constructor({ db, config, logger = console, emit = () => {}, idFactory = () => crypto.randomUUID(), now = () => new Date(), random = Math.random } = {}) { Object.assign(this, { db, config, logger, emit, idFactory, now, random }); }
   handle(raw) {
-    const event = parseDonation(raw); const receivedAt = this.now().toISOString(); let result;
+    const event = parseDonation(raw);
+    const receivedAt = this.now().toISOString(); let result; let settings;
+    this.logger.info?.('Donation event received', { provider: event.provider, amount: event.amount, currency: event.currency });
     this.db.transaction(() => {
       if (!this.db.insertDonation({ ...event, receivedAt, processedAt: receivedAt })) { result = { duplicate: true, eventId: event.eventId }; return; }
-      const settings = this.db.getSettings(this.config);
+      settings = this.db.getSettings(this.config);
       let pumpkin = this.db.findPumpkinByOwner(event.ownerKey);
       if (!pumpkin && event.provider === 'donationalerts' && event.ownerId) {
         pumpkin = this.db.findPumpkinByOwner(`name:${event.ownerNormalized}`);
@@ -65,13 +72,18 @@ export class DonationService {
           result = { duplicate: false, eventId: event.eventId, pumpkin: null, spawned: false, ignored: true, reason: 'spawn_command_missing', currencyApplied: true };
           return;
         }
-        const seed = { stage: 1, x: 0, y: this.config.scene.groundY, customization: DEFAULT_CUSTOMIZATION };
-        const position = findSpawnPosition(seed, this.db.listPumpkins(), context);
+        const spawnCustomization = command.recognized ? command.customization : {
+          ...command.customization,
+          eyes: randomChoice(Object.keys(CUSTOMIZATION_ALIASES.eyes), this.random),
+          mouth: randomChoice(Object.keys(CUSTOMIZATION_ALIASES.mouth), this.random),
+        };
+        const seed = { stage: 1, x: 0, y: this.config.scene.groundY, customization: spawnCustomization };
+        const position = findSpawnPosition(seed, this.db.listPumpkins(), context, this.random);
         if (!position || !isPositionValid(seed, position.x, position.y, context)) {
           result = { duplicate: false, eventId: event.eventId, pumpkin: null, spawned: false, ignored: true, reason: 'no_safe_spawn_position', currencyApplied: true };
           return;
         }
-        pumpkin = this.db.insertPumpkin({ id: this.idFactory(), ownerKey: event.ownerKey, ownerNormalized: event.ownerNormalized, displayName: event.displayName, twitchUserId: null, twitchUsername: null, totalDonated: 0, currency: settings.pumpkinCurrency, stage: 1, x: position.x, y: position.y, isAirborne: false, parentId: null, stackOffsetY: null, customization: DEFAULT_CUSTOMIZATION, createdAt: receivedAt, updatedAt: receivedAt });
+        pumpkin = this.db.insertPumpkin({ id: this.idFactory(), ownerKey: event.ownerKey, ownerNormalized: event.ownerNormalized, displayName: event.displayName, twitchUserId: null, twitchUsername: null, totalDonated: 0, currency: settings.pumpkinCurrency, stage: 1, x: position.x, y: position.y, isAirborne: false, parentId: null, stackOffsetY: null, customization: spawnCustomization, createdAt: receivedAt, updatedAt: receivedAt });
         spawned = true;
       }
       const customization = parseCustomization(event.message, pumpkin.customization, settings.spawnCommand);
@@ -81,7 +93,28 @@ export class DonationService {
       pumpkin = this.db.updatePumpkin(pumpkin.id, patch);
       result = { duplicate: false, eventId: event.eventId, pumpkin: publicPumpkin(pumpkin), spawned, evolved: oldStage !== stage, previousStage: oldStage, currencyApplied: true };
     });
-    if (result.duplicate || result.ignored) return result;
+    if (result.duplicate) {
+      this.logger.info?.('Donation event ignored', { provider: event.provider, reason: 'duplicate_event' });
+      return result;
+    }
+    if (result.ignored) {
+      this.logger.warn?.('Donation event ignored', {
+        provider: event.provider,
+        amount: event.amount,
+        currency: event.currency,
+        requiredCurrency: settings.pumpkinCurrency,
+        minimumAmount: settings.minSpawnDonation,
+        reason: result.reason,
+      });
+      return result;
+    }
+    this.logger.info?.('Donation event processed', {
+      provider: event.provider,
+      amount: event.amount,
+      currency: event.currency,
+      outcome: result.spawned ? 'pumpkin_spawned' : 'pumpkin_updated',
+      stage: result.pumpkin.stage,
+    });
     this.emit(result.spawned ? 'pumpkin:spawned' : 'pumpkin:updated', { pumpkin: result.pumpkin });
     if (result.evolved) this.emit('pumpkin:evolved', { id: result.pumpkin.id, stage: result.pumpkin.stage, totalDonated: result.pumpkin.totalDonated });
     return result;

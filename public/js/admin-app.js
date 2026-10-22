@@ -571,7 +571,40 @@ function wireUI() {
    $('#save-pumpkin').addEventListener('click', async () => { const p = selected(); if (!p) return; const patch = { displayName: $('#display-name').value.trim(), twitchUsername: $('#twitch-username').value.trim() || null, customization: p.customization }; $('#save-state').textContent = 'Sending changes for server validation…'; patchPumpkin(patch, { persist: false }); try { const response = await fetch(`/api/pumpkins/${encodeURIComponent(p.id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) }); if (!response.ok) throw new Error('server_rejected_changes'); $('#save-state').textContent = 'Saved by server.'; } catch { $('#save-state').textContent = 'Unable to save changes.'; } });
   $('#delete-pumpkin').addEventListener('click', () => { const p = selected(); if (!p || !window.confirm(`Delete ${displayName(p)}?`)) return; renderer.characters.get(p.id)?.disappear(); state.socket?.emit('admin:pumpkin:delete', { id: p.id }); });
   $('#clear-all').addEventListener('click', () => { if (!state.pumpkins.size || !window.confirm(`Delete all ${state.pumpkins.size} pumpkins? This cannot be undone.`)) return; state.socket?.emit('admin:pumpkins:clear', { confirmation: true }); });
-  $('#simulate-donation').addEventListener('click', async () => { try { const response = await fetch('/api/dev/donation', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: `dev-${Date.now()}`, name: $('#sim-name').value, amount: Number($('#sim-amount').value), currency: state.settings.pumpkinCurrency || 'RUB', message: state.settings.spawnCommand || '!тыковка' }) }); if (!response.ok) throw new Error('simulator_unavailable'); toast('Test donation sent'); } catch (error) { toast(error.message); } });
+  $('#simulate-donation').addEventListener('click', async () => {
+    try {
+      const response = await fetch('/api/dev/donation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: `dev-${Date.now()}`,
+          name: $('#sim-name').value,
+          amount: Number($('#sim-amount').value),
+          currency: state.settings.pumpkinCurrency || 'RUB',
+          message: state.settings.spawnCommand || '!тыковка',
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'simulator_unavailable');
+      const result = payload.result;
+      if (result?.ignored) {
+        const reasons = {
+          currency_mismatch: 'currency does not match the scene',
+          spawn_threshold_not_met: 'amount is below the spawn minimum',
+          spawn_command_missing: 'spawn command is missing',
+          no_safe_spawn_position: 'there is no safe spawn position',
+        };
+        toast(`Test donation ignored: ${reasons[result.reason] || result.reason}`);
+      } else if (result?.duplicate) {
+        toast('Test donation was already processed');
+      } else {
+        if (result?.pumpkin) upsertPumpkin(result.pumpkin);
+        toast(result?.spawned ? 'Test pumpkin spawned' : 'Existing pumpkin updated');
+      }
+    } catch (error) {
+      toast(error.message);
+    }
+  });
 }
 async function loadStatus() { try { const response = await fetch('/api/status'); const data = await response.json(); for (const item of data.integrations || []) updateProviderCard(item); const exposed = data.devSimulator || data.features?.donationSimulator; if (exposed) { $('#simulator').hidden = false; $('#test-pumpkin-tower').hidden = false; } } catch { /* Socket.IO remains the source of live state. */ } }
 bindPersistentDisclosures($$('details'));
