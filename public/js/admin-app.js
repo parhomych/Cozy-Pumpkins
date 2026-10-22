@@ -1,5 +1,5 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=tower-range-20261022';
-import { PumpkinCharacter } from './shared/pumpkin-character.js?v=hitbox-20261021';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=stage1-face-20261022';
+import { PumpkinCharacter } from './shared/pumpkin-character.js?v=stage1-face-20261022';
 import { eventToLogical, rectToCss, clamp } from './shared/coordinate-mapper.js';
 import { bindPersistentDisclosures } from './admin-disclosures.js';
 

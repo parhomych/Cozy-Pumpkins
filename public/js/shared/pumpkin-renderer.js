@@ -1,4 +1,4 @@
-import { PumpkinCharacter } from './pumpkin-character.js?v=hitbox-20261021';
+import { PumpkinCharacter } from './pumpkin-character.js?v=stage1-face-20261022';
 
 const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
 

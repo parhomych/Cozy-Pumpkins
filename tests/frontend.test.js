@@ -25,6 +25,10 @@ test('shared pumpkin artwork exposes independent reference layers and face parts
   assert.match(source, /STAGE_TWO_URL = '\/assets\/pumpkin-stage-2\.svg'/);
   assert.match(source, /appendStageTwoPaths\(markup, artwork\)/);
   assert.match(source, /stage-two-plant/);
+  assert.match(source, /function isStageOneFacePath\(/);
+  assert.match(source, /if \(isStageOneFacePath\(source, bounds\)\) return;/);
+  assert.match(source, /const leftEyeCenter = artworkPoint\(1281, 780\)/);
+  assert.match(source, /const centerX = offsetX \+ \(1365\.5 - STAGE_ONE_VIEWBOX\.x\) \* scale/);
   assert.match(source, /faceAnchor\.setAttribute\('transform', 'translate\(0 253\)'\)/);
   assert.match(source, /faceAnchor\.append\(face\)/);
   assert.match(source, /if \(stage === 2\) rocker\.append\(faceAnchor, hat, accessory\)/);
@@ -40,6 +44,8 @@ test('shared pumpkin artwork anchors every growth stage to its bottom edge', asy
   assert.match(source, /stageOneArtwork\(\)/);
   assert.match(source, /stageFourArtwork\(\)/);
   assert.match(source, /if \(stage !== 4\) leafBed\.append/);
+  assert.match(source, /if \(stage !== 1 && stage !== 2\) rocker\.append\(faceMask\)/);
+  assert.match(source, /else rocker\.append\(face, hat, accessory\)/);
   assert.match(source, /stage === 1 \|\| stage === 4/);
   assert.match(source, /leafBed\.setAttribute\('transform', stageTransform\);/);
   assert.match(source, /actor\.setAttribute\('transform', stageTransform\);/);
@@ -57,8 +63,8 @@ test('admin interaction uses the transformed artwork hitbox instead of the shift
   assert.match(svgSource, /mover\.append\(floater, interactionHitbox\)/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \{[\s\S]*pointer-events: none;/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \.interaction-hitbox \{[\s\S]*pointer-events: all;/);
-  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=tower-stack-order-20261022"/);
-  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=tower-range-20261022"/);
+  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=stage1-face-20261022"/);
+  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=stage1-face-20261022"/);
 });
 
 test('shared character includes smooth idle, face, stem, and cleanup animation hooks', async () => {

@@ -4,6 +4,7 @@ const STAGE_ONE_URL = '/assets/pumpkin-stage-1.svg';
 const STAGE_TWO_URL = '/assets/pumpkin-stage-2.svg';
 const STAGE_FOUR_URL = '/assets/pumpkin-stage-4.svg';
 const REFERENCE_VIEWBOX = 1095;
+const STAGE_ONE_VIEWBOX = Object.freeze({ x: 850, y: 80, width: 1100, height: 1380 });
 export const REFERENCE_DISPLAY_SIZE = 220;
 export const STAGE_SCALES = Object.freeze([0.58, 0.82, 1, 1.12]);
 export const DEFAULT_GROWTH_MULTIPLIERS = Object.freeze({ stage1: 0.58, stage2: 0.82, stage3: 1, stage4: 1.12 });
@@ -151,6 +152,29 @@ function stageOnePathBounds(source, probe) {
   return bounds;
 }
 
+function isStageOneFacePath(source, bounds) {
+  const fill = source.getAttribute('fill') || '';
+  const color = /^#([0-9a-f]{6})$/iu.exec(fill)?.[1];
+  if (!color || !bounds) return false;
+  const red = Number.parseInt(color.slice(0, 2), 16);
+  const green = Number.parseInt(color.slice(2, 4), 16);
+  const blue = Number.parseInt(color.slice(4, 6), 16);
+  const x = bounds.x + stageOneTranslateX(source);
+  const y = bounds.y + stageOneTranslateY(source);
+  const overlaps = (zone) => x < zone.x + zone.width && x + bounds.width > zone.x
+    && y < zone.y + zone.height && y + bounds.height > zone.y;
+  const eyeZone = overlaps({ x: 1235, y: 735, width: 85, height: 100 })
+    || overlaps({ x: 1410, y: 735, width: 90, height: 100 });
+  const mouthZone = overlaps({ x: 1325, y: 785, width: 85, height: 55 });
+  const cheekZone = overlaps({ x: 1205, y: 795, width: 85, height: 55 })
+    || overlaps({ x: 1440, y: 770, width: 65, height: 65 });
+  const smallFaceDetail = bounds.width < 120 && bounds.height < 100;
+  const darkFeature = Math.max(red, green, blue) < 115;
+  const eyeGlint = Math.min(red, green, blue) > 225;
+  const cheek = red > 215 && green > 70 && green < 170 && blue < 140;
+  return smallFaceDetail && ((darkFeature && (eyeZone || mouthZone)) || (eyeGlint && eyeZone) || (cheek && cheekZone));
+}
+
 function isStageOneSproutPath(source, bounds) {
   if (!isGreenPath(source) || stageOneTranslateY(source) > 530) return false;
   if (!bounds) return (source.getAttribute('d') || '').length < 12000;
@@ -176,10 +200,11 @@ function appendStageOnePaths(markup, artwork) {
     document.body.append(probe);
   }
   paths.forEach((source) => {
-    const clone = document.importNode ? document.importNode(source, true) : source.cloneNode(true);
     const bounds = stageOnePathBounds(source, probe);
+    if (isStageOneFacePath(source, bounds)) return;
     const green = isGreenPath(source);
     const sproutPath = isStageOneSproutPath(source, bounds);
+    const clone = document.importNode ? document.importNode(source, true) : source.cloneNode(true);
     // The vectorizer includes a large green underpainting silhouette for the
     // whole character. It sits behind the orange pumpkin in the source SVG,
     // but would show through as a duplicate when the sprout is separated.
@@ -300,6 +325,20 @@ function addFaceOverlay(face, customization) {
     }
   }
   eyes.append(leftEye, rightEye);
+  const eyesAnchor = group('eyes-anchor');
+  if (face.dataset.stage === '1') {
+    const scale = REFERENCE_VIEWBOX / STAGE_ONE_VIEWBOX.height;
+    const offsetX = (REFERENCE_VIEWBOX - STAGE_ONE_VIEWBOX.width * scale) / 2;
+    const artworkPoint = (x, y) => ({
+      x: offsetX + (x - STAGE_ONE_VIEWBOX.x) * scale,
+      y: (y - STAGE_ONE_VIEWBOX.y) * scale,
+    });
+    const leftEyeCenter = artworkPoint(1281, 780);
+    const rightEyeCenter = artworkPoint(1455, 780);
+    const eyeScale = (rightEyeCenter.x - leftEyeCenter.x) / (654 - 386);
+    eyesAnchor.setAttribute('transform', `translate(${leftEyeCenter.x - 386 * eyeScale} ${leftEyeCenter.y - 552 * eyeScale}) scale(${eyeScale})`);
+  }
+  eyesAnchor.append(eyes);
 
   const mouth = group(`mouth mouth-${customization.mouth}`);
   if (customization.mouth === 'fangs') {
@@ -313,7 +352,18 @@ function addFaceOverlay(face, customization) {
   } else {
     mouth.append(path('M474 636 Q530 690 588 636', { class: 'mouth-shape', fill: 'none', stroke: '#150a06', 'stroke-width': '12', 'stroke-linecap': 'round' }));
   }
-  face.append(eyes, mouth);
+  const mouthAnchor = group('mouth-anchor');
+  if (face.dataset.stage === '1') {
+    const scale = REFERENCE_VIEWBOX / STAGE_ONE_VIEWBOX.height;
+    const offsetX = (REFERENCE_VIEWBOX - STAGE_ONE_VIEWBOX.width * scale) / 2;
+    const centerX = offsetX + (1365.5 - STAGE_ONE_VIEWBOX.x) * scale;
+    const centerY = (807 - STAGE_ONE_VIEWBOX.y) * scale;
+    const scaleX = (58 * scale) / 114;
+    const scaleY = (27 * scale) / 72;
+    mouthAnchor.setAttribute('transform', `translate(${centerX - 530 * scaleX} ${centerY - 665 * scaleY}) scale(${scaleX} ${scaleY})`);
+  }
+  mouthAnchor.append(mouth);
+  face.append(eyesAnchor, mouthAnchor);
 }
 
 /** Build the supplied reference SVG inside the shared animation hierarchy. */
@@ -361,6 +411,7 @@ export function createPumpkinSvg(pumpkin = {}) {
   if (stage !== 1 && stage !== 2 && stage !== 4) hydrateReferencePaths(layers);
 
   const face = group(`face face-${customization.mouth}`);
+  face.dataset.stage = String(stage);
   addFaceOverlay(face, customization);
   const faceAnchor = group('face-anchor');
   if (stage === 2) {
@@ -382,7 +433,7 @@ export function createPumpkinSvg(pumpkin = {}) {
   else if (customization.prop === 'candle') accessory.append(node('rect', { x: '102', y: '42', width: '16', height: '33', rx: '5', fill: '#f1d49b', stroke: '#7d4c29', 'stroke-width': '3' }));
 
   if (stage === 2) rocker.append(faceAnchor, hat, accessory);
-  else if (stage !== 1) rocker.append(face, hat, accessory);
+  else rocker.append(face, hat, accessory);
   bodyLook.append(rocker);
   bodyMotion.append(bodyLook);
   actor.append(bodyMotion);

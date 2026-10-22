@@ -1,4 +1,4 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=tower-range-20261022';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=stage1-face-20261022';
 
 const connectionPill = document.querySelector('#connection-state');
 const canvas = document.querySelector('#overlay-scene');
