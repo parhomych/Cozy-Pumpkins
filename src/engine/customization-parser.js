@@ -3,8 +3,8 @@ import { normalizeText } from '../utils/normalize.js';
 export const DEFAULT_CUSTOMIZATION = Object.freeze({ skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' });
 export const CUSTOMIZATION_ALIASES = {
   skin: { classic: ['classic', 'классика', 'классическая', 'оранжевая'], ghost: ['ghost', 'призрак', 'призрачная'], vampire: ['vampire', 'вампир', 'вампирская'], witch: ['witch', 'ведьма', 'фиолетовая'], gold: ['gold', 'золотая', 'золото'] },
-  eyes: { cute: ['cute', 'милые', 'круглые'], sly: ['sly', 'хитрые', 'прищур'], stars: ['stars', 'звёзды', 'звезды', 'звёздные', 'звездные'], sleepy: ['sleepy', 'сонные', 'сонный'], hypno: ['hypno', 'спирали', 'гипноз', 'гипно'] },
-  mouth: { cat: ['cat', 'улыбка', 'милый рот', 'кот'], fangs: ['fangs', 'клыки', 'вампирские зубы'], jack: ['jack', 'ухмылка', 'джек', 'тыквенная улыбка'], candy: ['candy', 'конфетка', 'леденец', 'конфета'], o: ['o', 'о', 'удивление', 'удивлённый', 'удивленный'] },
+  eyes: { cute: ['cute', 'милые', 'круглые'], sly: ['sly', 'хитрые', 'прищур'], stars: ['stars', 'звёзды', 'звезды', 'звёздные', 'звездные'], sleepy: ['sleepy', 'сонные', 'сонный'], hypno: ['hypno', 'спирали', 'гипноз', 'гипно'], neca_eyes: ['neca_eyes', 'neca eyes', 'глаза неки'] },
+  mouth: { cat: ['cat', 'улыбка', 'милый рот', 'кот'], fangs: ['fangs', 'клыки', 'вампирские зубы'], jack: ['jack', 'ухмылка', 'джек', 'тыквенная улыбка'], candy: ['candy', 'конфетка', 'леденец', 'конфета'], o: ['o', 'о', 'удивление', 'удивлённый', 'удивленный'], neca_mouth: ['neca_mouth', 'neca mouth', 'рот неки'] },
   hat: {},
   prop: {},
 };

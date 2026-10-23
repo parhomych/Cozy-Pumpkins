@@ -201,6 +201,23 @@ function renderCustomizationCatalog(catalog = []) {
   actionSection.append(actionHeading, actionGrid);
   container.append(actionSection);
 }
+function populateFaceChoices(catalog = []) {
+  if (!Array.isArray(catalog)) return;
+  for (const group of catalog) {
+    if ((group?.slot !== 'eyes' && group?.slot !== 'mouth') || !Array.isArray(group.values)) continue;
+    const select = $(`[data-slot="${group.slot}"]`);
+    if (!select) continue;
+    const currentValue = select.value;
+    for (const item of group.values) {
+      if (typeof item?.value !== 'string' || [...select.options].some((option) => option.value === item.value)) continue;
+      const option = document.createElement('option');
+      option.value = item.value;
+      option.textContent = item.label || item.value.replace(/[_-]+/gu, ' ');
+      select.append(option);
+    }
+    select.value = currentValue;
+  }
+}
 async function loadSpawnSettings() {
   const status = $('#spawn-settings-state');
   try {
@@ -209,6 +226,7 @@ async function loadSpawnSettings() {
     if (!response.ok) throw new Error(body.error || 'settings_load_failed');
     state.settings = { ...state.settings, ...(body.settings || {}) };
     state.customizationCatalog = body.customizationCatalog || [];
+    populateFaceChoices(state.customizationCatalog);
     renderSpawnSettings();
     renderTowerAnimationSettings();
     renderGrowthStages();

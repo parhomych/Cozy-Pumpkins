@@ -290,41 +290,50 @@ function addFaceMask(mask) {
 
 function addFaceOverlay(face, customization) {
   const eyes = group(`eyes eyes-${customization.eyes}`);
-  const leftEye = group('eye eye-left');
-  const rightEye = group('eye eye-right');
-  const variantEyes = customization.eyes !== 'cute';
-  const coverOpacity = 0;
-  const eyeCover = (cx) => node('ellipse', {
-    class: 'eye-lid', cx, cy: '552', rx: '53', ry: '58', fill: '#f5991a', opacity: String(coverOpacity),
-  });
-  leftEye.append(eyeCover('386')); rightEye.append(eyeCover('654'));
-
-  const eye = (cx) => node('ellipse', { class: 'eye-shape variant-eye-shape', cx, cy: '551', rx: '34', ry: '41', fill: '#150a06' });
-  if (!variantEyes) {
-    leftEye.append(eye('386'), node('circle', { class: 'eye-glint variant-eye-glint', cx: '374', cy: '538', r: '10', fill: '#fff8e4' }));
-    rightEye.append(eye('654'), node('circle', { class: 'eye-glint variant-eye-glint', cx: '642', cy: '538', r: '10', fill: '#fff8e4' }));
+  if (customization.eyes === 'neca_eyes') {
+    eyes.append(group('eye eye-neca-pair', [
+      node('image', {
+        class: 'neca-eye-art', href: '/assets/neca_eyes.svg',
+        x: '400', y: '478', width: '260', height: '154',
+        preserveAspectRatio: 'none', 'aria-hidden': 'true',
+      }),
+    ]));
   } else {
-    if (customization.eyes === 'sleepy') {
-      leftEye.append(path('M345 553 Q386 582 427 553', { class: 'variant-eye-shape', fill: 'none', stroke: '#150a06', 'stroke-width': '17', 'stroke-linecap': 'round' }));
-      rightEye.append(path('M613 553 Q654 582 695 553', { class: 'variant-eye-shape', fill: 'none', stroke: '#150a06', 'stroke-width': '17', 'stroke-linecap': 'round' }));
+    const leftEye = group('eye eye-left');
+    const rightEye = group('eye eye-right');
+    const variantEyes = customization.eyes !== 'cute';
+    const eyeCover = (cx) => node('ellipse', {
+      class: 'eye-lid', cx, cy: '552', rx: '53', ry: '58', fill: '#f5991a', opacity: '0',
+    });
+    leftEye.append(eyeCover('386')); rightEye.append(eyeCover('654'));
+
+    const eye = (cx) => node('ellipse', { class: 'eye-shape variant-eye-shape', cx, cy: '551', rx: '34', ry: '41', fill: '#150a06' });
+    if (!variantEyes) {
+      leftEye.append(eye('386'), node('circle', { class: 'eye-glint variant-eye-glint', cx: '374', cy: '538', r: '10', fill: '#fff8e4' }));
+      rightEye.append(eye('654'), node('circle', { class: 'eye-glint variant-eye-glint', cx: '642', cy: '538', r: '10', fill: '#fff8e4' }));
     } else {
-      leftEye.append(eye('386')); rightEye.append(eye('654'));
-      if (customization.eyes === 'stars') {
-        leftEye.append(path('M386 523 l8 20 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z', { fill: '#fff8e4' }));
-        rightEye.append(path('M654 523 l8 20 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z', { fill: '#fff8e4' }));
-      } else if (customization.eyes === 'sly') {
-        leftEye.append(path('M348 535 L424 558', { stroke: '#fff8e4', 'stroke-width': '11', 'stroke-linecap': 'round' }));
-        rightEye.append(path('M616 558 L692 535', { stroke: '#fff8e4', 'stroke-width': '11', 'stroke-linecap': 'round' }));
-      } else if (customization.eyes === 'hypno') {
-        leftEye.append(path('M360 551 q26 -29 52 0 t52 0', { fill: 'none', stroke: '#fff8e4', 'stroke-width': '6' }));
-        rightEye.append(path('M628 551 q26 -29 52 0 t52 0', { fill: 'none', stroke: '#fff8e4', 'stroke-width': '6' }));
+      if (customization.eyes === 'sleepy') {
+        leftEye.append(path('M345 553 Q386 582 427 553', { class: 'variant-eye-shape', fill: 'none', stroke: '#150a06', 'stroke-width': '17', 'stroke-linecap': 'round' }));
+        rightEye.append(path('M613 553 Q654 582 695 553', { class: 'variant-eye-shape', fill: 'none', stroke: '#150a06', 'stroke-width': '17', 'stroke-linecap': 'round' }));
       } else {
-        leftEye.append(node('circle', { class: 'eye-glint variant-eye-glint', cx: '374', cy: '538', r: '10', fill: '#fff8e4' }));
-        rightEye.append(node('circle', { class: 'eye-glint variant-eye-glint', cx: '642', cy: '538', r: '10', fill: '#fff8e4' }));
+        leftEye.append(eye('386')); rightEye.append(eye('654'));
+        if (customization.eyes === 'stars') {
+          leftEye.append(path('M386 523 l8 20 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z', { fill: '#fff8e4' }));
+          rightEye.append(path('M654 523 l8 20 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z', { fill: '#fff8e4' }));
+        } else if (customization.eyes === 'sly') {
+          leftEye.append(path('M348 535 L424 558', { stroke: '#fff8e4', 'stroke-width': '11', 'stroke-linecap': 'round' }));
+          rightEye.append(path('M616 558 L692 535', { stroke: '#fff8e4', 'stroke-width': '11', 'stroke-linecap': 'round' }));
+        } else if (customization.eyes === 'hypno') {
+          leftEye.append(path('M360 551 q26 -29 52 0 t52 0', { fill: 'none', stroke: '#fff8e4', 'stroke-width': '6' }));
+          rightEye.append(path('M628 551 q26 -29 52 0 t52 0', { fill: 'none', stroke: '#fff8e4', 'stroke-width': '6' }));
+        } else {
+          leftEye.append(node('circle', { class: 'eye-glint variant-eye-glint', cx: '374', cy: '538', r: '10', fill: '#fff8e4' }));
+          rightEye.append(node('circle', { class: 'eye-glint variant-eye-glint', cx: '642', cy: '538', r: '10', fill: '#fff8e4' }));
+        }
       }
     }
+    eyes.append(leftEye, rightEye);
   }
-  eyes.append(leftEye, rightEye);
   const eyesAnchor = group('eyes-anchor');
   if (face.dataset.stage === '1') {
     const scale = REFERENCE_VIEWBOX / STAGE_ONE_VIEWBOX.height;
@@ -341,7 +350,13 @@ function addFaceOverlay(face, customization) {
   eyesAnchor.append(eyes);
 
   const mouth = group(`mouth mouth-${customization.mouth}`);
-  if (customization.mouth === 'fangs') {
+  if (customization.mouth === 'neca_mouth') {
+    mouth.append(node('image', {
+      class: 'neca-mouth-art', href: '/assets/neca_mouth.svg',
+      x: '450', y: '625', width: '160', height: '82',
+      preserveAspectRatio: 'none', 'aria-hidden': 'true',
+    }));
+  } else if (customization.mouth === 'fangs') {
     mouth.append(path('M468 635 Q530 688 592 635 L582 700 Q530 730 478 700Z', { class: 'mouth-shape', fill: '#150a06' }), path('M495 658 l16 34 17-31 M565 661 l-17 31-16-34', { fill: '#fff8e4', stroke: '#fff8e4', 'stroke-width': '8' }));
   } else if (customization.mouth === 'o') {
     mouth.append(node('ellipse', { class: 'mouth-shape', cx: '530', cy: '665', rx: '35', ry: '46', fill: '#150a06' }));
