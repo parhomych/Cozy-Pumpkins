@@ -357,10 +357,14 @@ test('shared pumpkin artwork anchors every growth stage to its bottom edge', asy
   assert.match(source, /if \(stage !== 4\) leafBed\.append/);
   assert.match(source, /if \(stage !== 1 && stage !== 2\) rocker\.append\(faceMask\)/);
   assert.match(source, /else rocker\.append\(face, hat, accessory\)/);
-  assert.match(source, /stage === 1 \|\| stage === 4/);
-  assert.match(source, /leafBed\.setAttribute\('transform', stageTransform\);/);
-  assert.match(source, /actor\.setAttribute\('transform', stageTransform\);/);
-  assert.match(source, /stage === 2\s*\?\s*'translate\(68 -45\)'/);
+  assert.match(source, /const artworkAnchor = group\('artwork-ground-alignment'\);/);
+  assert.match(source, /artworkAnchor\.setAttribute\('transform', stageTransform\);/);
+  assert.match(source, /artworkAnchor\.append\(leafBed, actor\);/);
+  assert.match(source, /floater\.append\(artworkAnchor\)/);
+  assert.match(source, /stage === 1\s*\?\s*'translate\(0 55\)'/);
+  assert.match(source, /stage === 4\s*\?\s*'translate\(0 29\)'/);
+  assert.match(source, /stage === 2\s*\?\s*'translate\(68 9\)'/);
+  assert.match(source, /REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM/);
   assert.match(source, /stage !== 1 && stage !== 2 && stage !== 4\) hydrateReferencePaths/);
 });
 

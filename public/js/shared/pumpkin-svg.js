@@ -416,6 +416,7 @@ export function createPumpkinSvg(pumpkin = {}) {
 
   const mover = group('mover');
   const floater = group('floater');
+  const artworkAnchor = group('artwork-ground-alignment');
   const actor = group('actor');
   const leafBed = group('leaf-bed-static');
   const bodyMotion = group('body-motion idle-body-motion');
@@ -472,15 +473,17 @@ export function createPumpkinSvg(pumpkin = {}) {
   bodyMotion.append(bodyLook);
   actor.append(bodyMotion);
   // Keep the visible artwork anchored inside the root square. Growth scaling
-  // belongs to the root layout box; applying it again to these groups makes
-  // the visual artwork and the drag hitbox disagree at stages 1 and 4.
-  const stageTransform = stage === 1 || stage === 4
-    ? 'translate(0 0)'
-    : stage === 2
-      ? 'translate(68 -45)'
-    : `translate(${REFERENCE_VIEWBOX / 2 - REFERENCE_ARTWORK_CENTER_X} ${REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM})`;
-  leafBed.setAttribute('transform', stageTransform);
-  actor.setAttribute('transform', stageTransform);
+  // belongs to the root layout box. Keep this correction outside animated
+  // layers so drag and jump transforms cannot replace it.
+  const stageTransform = stage === 1
+    ? 'translate(0 55)'
+    : stage === 4
+      ? 'translate(0 29)'
+      : stage === 2
+        ? 'translate(68 9)'
+        : `translate(${REFERENCE_VIEWBOX / 2 - REFERENCE_ARTWORK_CENTER_X} ${REFERENCE_VIEWBOX - REFERENCE_ARTWORK_BOTTOM})`;
+  artworkAnchor.setAttribute('transform', stageTransform);
+  artworkAnchor.append(leafBed, actor);
   // The root SVG is the stage-sized logical square. Keep the hitbox in that
   // same untransformed square so it cannot drift away from the visual box.
   const interactionHitbox = node('rect', {
@@ -489,7 +492,7 @@ export function createPumpkinSvg(pumpkin = {}) {
     width: String(REFERENCE_INTERACTION_BOX.width), height: String(REFERENCE_INTERACTION_BOX.height),
     fill: 'transparent', 'pointer-events': 'all', 'aria-hidden': 'true',
   });
-  floater.append(leafBed, actor); mover.append(floater, interactionHitbox); root.append(mover);
+  floater.append(artworkAnchor); mover.append(floater, interactionHitbox); root.append(mover);
   return root;
 }
 

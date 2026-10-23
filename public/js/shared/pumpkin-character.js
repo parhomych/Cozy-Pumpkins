@@ -1,4 +1,4 @@
-import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=stage1-face-20261022';
+import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=stage-ground-alignment-20261023';
 
 const getGsap = () => globalThis.gsap || globalThis.window?.gsap || null;
 const wait = (fn, ms) => setTimeout(fn, ms);
