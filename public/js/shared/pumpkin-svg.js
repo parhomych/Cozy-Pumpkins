@@ -289,15 +289,28 @@ function addFaceMask(mask) {
 }
 
 function addFaceOverlay(face, customization) {
+  const faceScale = face.dataset.stage === '3' || face.dataset.stage === '4' ? 1.45 : 1;
   const eyes = group(`eyes eyes-${customization.eyes}`);
   if (customization.eyes === 'neca_eyes') {
-    eyes.append(group('eye eye-neca-pair', [
-      node('image', {
-        class: 'neca-eye-art', href: '/assets/neca_eyes.svg',
-        x: '400', y: '478', width: '260', height: '154',
-        preserveAspectRatio: 'none', 'aria-hidden': 'true',
-      }),
-    ]));
+    const eye = (className, x, viewBoxX, centerX) => {
+      const artwork = group('neca-eye-artwork', [
+        node('svg', {
+          class: 'neca-eye-viewport', x, y: '478', width: '130', height: '154',
+          viewBox: `${viewBoxX} 0 506 600`, preserveAspectRatio: 'none', 'aria-hidden': 'true',
+        }, [
+          node('image', {
+            href: '/assets/neca_eyes.svg', x: '0', y: '0', width: '1012', height: '600',
+            preserveAspectRatio: 'none',
+          }),
+        ]),
+      ]);
+      if (faceScale !== 1) artwork.setAttribute('transform', `translate(${centerX} 551) scale(${faceScale}) translate(${-centerX} -551)`);
+      return group(`eye ${className}`, [artwork]);
+    };
+    eyes.append(
+      eye('eye-neca-left', '321', '0', 386),
+      eye('eye-neca-right', '589', '506', 654),
+    );
   } else {
     const leftEye = group('eye eye-left');
     const rightEye = group('eye eye-right');
@@ -351,11 +364,15 @@ function addFaceOverlay(face, customization) {
 
   const mouth = group(`mouth mouth-${customization.mouth}`);
   if (customization.mouth === 'neca_mouth') {
-    mouth.append(node('image', {
-      class: 'neca-mouth-art', href: '/assets/neca_mouth.svg',
-      x: '450', y: '625', width: '160', height: '82',
-      preserveAspectRatio: 'none', 'aria-hidden': 'true',
-    }));
+    const artwork = group('neca-mouth-artwork', [
+      node('image', {
+        class: 'neca-mouth-art', href: '/assets/neca_mouth.svg',
+        x: '450', y: '639', width: '160', height: '82',
+        preserveAspectRatio: 'none', 'aria-hidden': 'true',
+      }),
+    ]);
+    if (faceScale !== 1) artwork.setAttribute('transform', `translate(530 684) scale(${faceScale}) translate(-530 -684)`);
+    mouth.append(artwork);
   } else if (customization.mouth === 'fangs') {
     mouth.append(path('M468 635 Q530 688 592 635 L582 700 Q530 730 478 700Z', { class: 'mouth-shape', fill: '#150a06' }), path('M495 658 l16 34 17-31 M565 661 l-17 31-16-34', { fill: '#fff8e4', stroke: '#fff8e4', 'stroke-width': '8' }));
   } else if (customization.mouth === 'o') {
