@@ -14,11 +14,11 @@ test('shared renderer keeps Neca artwork in the existing animated face slots', a
   const renderer = await read('../public/js/shared/pumpkin-svg.js');
   const character = await read('../public/js/shared/pumpkin-character.js');
 
-  assert.match(renderer, /customization\.eyes === 'neca_eyes'[\s\S]*?eye\('eye-neca-left', '321', '0', 386\)[\s\S]*?eye\('eye-neca-right', '589', '506', 654\)/u);
+  assert.match(renderer, /const stageTwo = face\.dataset\.stage === '2';[\s\S]*?eye\('eye-neca-left', stageTwo \? '358' : '321', '0', stageTwo \? 420 : 386\)[\s\S]*?eye\('eye-neca-right', stageTwo \? '575' : '589', '506', stageTwo \? 640 : 654\)/u);
   assert.match(renderer, /href: '\/assets\/neca_eyes\.svg'/u);
   assert.match(renderer, /const mouth = group\(`mouth mouth-\$\{customization\.mouth\}`\);[\s\S]*?customization\.mouth === 'neca_mouth'/u);
   assert.match(renderer, /href: '\/assets\/neca_mouth\.svg'/u);
-  assert.match(renderer, /face\.dataset\.stage === '3' \|\| face\.dataset\.stage === '4' \? 1\.45 : 1/u);
+  assert.match(renderer, /face\.dataset\.stage === '1' \? 1\.3 : face\.dataset\.stage === '3' \|\| face\.dataset\.stage === '4' \? 1\.45 : 1/u);
   assert.match(renderer, /x: '450', y: '639', width: '160', height: '82'/u);
   assert.match(character, /querySelectorAll\('\.eyes \.eye'\)/u);
   assert.match(character, /gsap\.to\(this\.mouth/u);

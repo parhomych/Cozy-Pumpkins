@@ -289,9 +289,10 @@ function addFaceMask(mask) {
 }
 
 function addFaceOverlay(face, customization) {
-  const faceScale = face.dataset.stage === '3' || face.dataset.stage === '4' ? 1.45 : 1;
+  const faceScale = face.dataset.stage === '1' ? 1.3 : face.dataset.stage === '3' || face.dataset.stage === '4' ? 1.45 : 1;
   const eyes = group(`eyes eyes-${customization.eyes}`);
   if (customization.eyes === 'neca_eyes') {
+    const stageTwo = face.dataset.stage === '2';
     const eye = (className, x, viewBoxX, centerX) => {
       const artwork = group('neca-eye-artwork', [
         node('svg', {
@@ -308,8 +309,8 @@ function addFaceOverlay(face, customization) {
       return group(`eye ${className}`, [artwork]);
     };
     eyes.append(
-      eye('eye-neca-left', '321', '0', 386),
-      eye('eye-neca-right', '589', '506', 654),
+      eye('eye-neca-left', stageTwo ? '358' : '321', '0', stageTwo ? 420 : 386),
+      eye('eye-neca-right', stageTwo ? '575' : '589', '506', stageTwo ? 640 : 654),
     );
   } else {
     const leftEye = group('eye eye-left');
