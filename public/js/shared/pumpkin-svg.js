@@ -289,7 +289,7 @@ function addFaceMask(mask) {
 }
 
 function addFaceOverlay(face, customization) {
-  const faceScale = face.dataset.stage === '1' ? 1.3 : face.dataset.stage === '3' || face.dataset.stage === '4' ? 1.45 : 1;
+  const faceScale = face.dataset.stage === '1' || face.dataset.stage === '3' || face.dataset.stage === '4' ? 1.45 : 1;
   const eyes = group(`eyes eyes-${customization.eyes}`);
   if (customization.eyes === 'neca_eyes') {
     const stageTwo = face.dataset.stage === '2';
@@ -393,7 +393,8 @@ function addFaceOverlay(face, customization) {
     const centerY = (807 - STAGE_ONE_VIEWBOX.y) * scale;
     const scaleX = (58 * scale) / 114;
     const scaleY = (27 * scale) / 72;
-    mouthAnchor.setAttribute('transform', `translate(${centerX - 530 * scaleX} ${centerY - 665 * scaleY}) scale(${scaleX} ${scaleY})`);
+    const necaMouthOffset = customization.mouth === 'neca_mouth' ? 60 : 0;
+    mouthAnchor.setAttribute('transform', `translate(${centerX - 530 * scaleX} ${centerY - 665 * scaleY + necaMouthOffset}) scale(${scaleX} ${scaleY})`);
   }
   mouthAnchor.append(mouth);
   face.append(eyesAnchor, mouthAnchor);

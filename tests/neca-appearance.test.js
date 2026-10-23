@@ -18,8 +18,9 @@ test('shared renderer keeps Neca artwork in the existing animated face slots', a
   assert.match(renderer, /href: '\/assets\/neca_eyes\.svg'/u);
   assert.match(renderer, /const mouth = group\(`mouth mouth-\$\{customization\.mouth\}`\);[\s\S]*?customization\.mouth === 'neca_mouth'/u);
   assert.match(renderer, /href: '\/assets\/neca_mouth\.svg'/u);
-  assert.match(renderer, /face\.dataset\.stage === '1' \? 1\.3 : face\.dataset\.stage === '3' \|\| face\.dataset\.stage === '4' \? 1\.45 : 1/u);
+  assert.match(renderer, /face\.dataset\.stage === '1' \|\| face\.dataset\.stage === '3' \|\| face\.dataset\.stage === '4' \? 1\.45 : 1/u);
   assert.match(renderer, /x: '450', y: '639', width: '160', height: '82'/u);
+  assert.match(renderer, /const necaMouthOffset = customization\.mouth === 'neca_mouth' \? 60 : 0;[\s\S]*?centerY - 665 \* scaleY \+ necaMouthOffset/u);
   assert.match(character, /querySelectorAll\('\.eyes \.eye'\)/u);
   assert.match(character, /gsap\.to\(this\.mouth/u);
 });
