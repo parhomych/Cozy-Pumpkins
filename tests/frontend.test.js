@@ -92,7 +92,7 @@ test('pumpkin follows one parabolic jump, reaches its exact target, and cancels 
     character.tweens = new Set();
     character.actionTweens = new Set();
     character.stopAction = PumpkinCharacter.prototype.stopAction;
-    character.hopTo(700, 500, { speed: 100 });
+    character.hopTo(700, 500, { speed: 100, height: 90 });
 
     const [hop] = timelines;
     const jump = hop.tweens.find(({ target }) => target !== character.actor);
@@ -112,6 +112,9 @@ test('pumpkin follows one parabolic jump, reaches its exact target, and cancels 
     );
     assert.equal(jump.vars.ease, 'none', 'linear progress keeps the trajectory parabolic');
     assert.equal(jump.vars.duration, 6, 'movement duration follows the configured pixels-per-second speed');
+    jump.target.value = 0.5;
+    jump.vars.onUpdate();
+    assert.equal(character.y, 410, 'the configured parabola height sets the apex relative to the baseline');
     assert.deepEqual(
       squashTweens.map(({ vars }) => [vars.scaleX, vars.scaleY]),
       [[.82, 1.16], [1, 1], [1.18, .84], [1, 1]],
@@ -121,8 +124,6 @@ test('pumpkin follows one parabolic jump, reaches its exact target, and cancels 
     assert.ok(squashTweens[2].vars.duration >= .35, 'landing compression remains gradual');
     assert.ok(squashTweens[3].vars.duration >= .55, 'landing returns slowly to the original shape');
     assert.ok(squashTweens.every(({ vars }) => vars.ease === 'sine.inOut' || vars.ease === 'sine.out'));
-    jump.target.value = 0.5;
-    jump.vars.onUpdate();
     assert.equal(character.x, 400, 'the pumpkin moves horizontally through the arc midpoint');
     assert.ok(character.y < 500, 'the pumpkin reaches the apex halfway through the jump');
     hop.options.onComplete();
@@ -135,12 +136,12 @@ test('pumpkin follows one parabolic jump, reaches its exact target, and cancels 
     otherCharacter.tweens = new Set();
     otherCharacter.actionTweens = new Set();
     otherCharacter.stopAction = PumpkinCharacter.prototype.stopAction;
-    otherCharacter.hopTo(800, 500, { duration: 1.8 });
+    otherCharacter.hopTo(800, 500, { duration: 1.8, height: 90 });
     const independentHop = timelines[1];
     assert.notEqual(independentHop, hop);
     assert.equal(independentHop.killed, false, 'one character can hop while another is in motion');
 
-    character.hopTo(900, 500, { duration: 1.8 });
+    character.hopTo(900, 500, { duration: 1.8, height: 90 });
     const interruptedHop = timelines[2];
     character.moveTo(350, 480, { immediate: true, isAirborne: true });
     assert.equal(interruptedHop.killed, true);
@@ -281,8 +282,8 @@ test('renderer hops only for explicit roaming moves and starts physics after an 
       destroy() {},
     };
     renderer.characters.set('roamer', character);
-    renderer.applyMove({ id: 'roamer', x: 600, y: 980, sequence: -1, movementType: 'roam', roamingSpeed: 200 });
-    assert.deepEqual(hops, [{ x: 600, y: 980, options: { speed: 200 } }]);
+    renderer.applyMove({ id: 'roamer', x: 600, y: 980, sequence: -1, movementType: 'roam', roamingSpeed: 200, roamingJumpHeight: 95 });
+    assert.deepEqual(hops, [{ x: 600, y: 980, options: { speed: 200, height: 95 } }]);
     assert.equal(moves.length, 0, 'autonomous roaming uses hops, not a smooth glide');
     renderer.applyMove({ id: 'roamer', x: 610, y: 980, sequence: -1 });
     assert.equal(hops.length, 1, 'manual moves without the roam marker do not start hop animation');
@@ -373,8 +374,8 @@ test('admin interaction uses the transformed artwork hitbox instead of the shift
   assert.match(svgSource, /mover\.append\(floater, interactionHitbox\)/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \{[\s\S]*pointer-events: none;/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \.interaction-hitbox \{[\s\S]*pointer-events: all;/);
-  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=pumpkin-cartoon-squash-20261023"/);
-  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=pumpkin-cartoon-squash-20261023"/);
+  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=pumpkin-movement-distance-20261023"/);
+  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=pumpkin-jump-height-setting-20261023"/);
 });
 
 test('shared character includes smooth idle, face, stem, and cleanup animation hooks', async () => {
@@ -588,8 +589,13 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(source, /admin:settings:update/);
   assert.match(html, /id="roaming-interval-seconds"/);
   assert.match(html, /id="roaming-speed"/);
+  assert.match(html, /id="roaming-jump-height"/);
+  assert.match(html, /id="roaming-min-distance"/);
+  assert.match(html, /id="roaming-max-distance"/);
   assert.match(source, /function saveRoamingSettings\(\)/);
+  assert.match(source, /\$\$\('#roaming-interval-seconds, #roaming-speed, #roaming-jump-height, #roaming-min-distance, #roaming-max-distance'\)\.forEach\(\(input\) => input\.addEventListener\('change', saveRoamingSettings\)\)/);
   assert.match(source, /Movement settings saved\./);
+  assert.match(source, /The server rejected the movement settings\. Check the entered values and distance range\./);
   assert.match(source, /setTowerAnimationSettings/); assert.match(source, /towerAnimation/); assert.match(source, /invalid_tower_animation/);
   assert.match(source, /rewardMapping/);
   assert.match(source, /saveRewardMapping/);

@@ -2,7 +2,6 @@ import { dimensionsFor, isPositionValid } from './spatial-rules.js';
 import { DEFAULT_ROAMING_SETTINGS } from './roaming-settings.js';
 
 const MAX_ATTEMPTS = 20;
-const MAX_DISTANCE = 240;
 const MIN_DISTANCE = 30;
 const DEFAULT_INTERVAL_MS = DEFAULT_ROAMING_SETTINGS.roamingIntervalSeconds * 1000;
 
@@ -15,7 +14,8 @@ function destinationIsAvailable(pumpkin, x, y, pumpkins, context) {
 export function findRoamingTarget(pumpkin, pumpkins, context, {
   random = Math.random,
   maxAttempts = MAX_ATTEMPTS,
-  maxDistance = MAX_DISTANCE,
+  minDistance = DEFAULT_ROAMING_SETTINGS.roamingMinDistance,
+  maxDistance = DEFAULT_ROAMING_SETTINGS.roamingMaxDistance,
 } = {}) {
   if (!pumpkin || pumpkin.isAirborne || pumpkin.parentId || !context?.scene) return null;
   const groundY = Number.isFinite(context.scene.groundY)
@@ -23,13 +23,15 @@ export function findRoamingTarget(pumpkin, pumpkins, context, {
     : context.scene.height - context.scene.padding;
   if (Math.abs(pumpkin.y - groundY) > 0.1) return null;
   const attempts = Math.max(0, Math.min(MAX_ATTEMPTS, Math.floor(maxAttempts)));
-  const distance = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, Number(maxDistance) || MAX_DISTANCE));
+  const sceneWidth = Number(context.scene.width) || 1920;
+  const minimumDistance = Math.max(MIN_DISTANCE, Math.min(sceneWidth, Number(minDistance) || MIN_DISTANCE));
+  const maximumDistance = Math.max(minimumDistance, Math.min(sceneWidth, Number(maxDistance) || DEFAULT_ROAMING_SETTINGS.roamingMaxDistance));
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const sample = Number(random());
     if (!Number.isFinite(sample)) continue;
     const fraction = Math.max(0, Math.min(1, sample));
-    const x = pumpkin.x + (fraction * 2 - 1) * distance;
-    if (Math.abs(x - pumpkin.x) < MIN_DISTANCE
+    const x = pumpkin.x + (fraction * 2 - 1) * maximumDistance;
+    if (Math.abs(x - pumpkin.x) < minimumDistance
       || !destinationIsAvailable(pumpkin, x, groundY, pumpkins, context)) continue;
     return { x, y: groundY };
   }
@@ -39,7 +41,8 @@ export function findRoamingTarget(pumpkin, pumpkins, context, {
   const maxX = context.scene.width - minX;
   const candidates = [];
   for (let x = minX; x <= maxX; x += MIN_DISTANCE) {
-    if (Math.abs(x - pumpkin.x) >= MIN_DISTANCE
+    if (Math.abs(x - pumpkin.x) >= minimumDistance
+      && Math.abs(x - pumpkin.x) <= maximumDistance
       && destinationIsAvailable(pumpkin, x, groundY, pumpkins, context)) candidates.push(x);
   }
   if (!candidates.length) return null;
@@ -84,14 +87,18 @@ export function createPumpkinMovementScheduler({
       const index = (cursor + offset) % pumpkins.length;
       const pumpkin = pumpkins[index];
       if (pausedPumpkins.has(pumpkin.id) || pumpkin.isAirborne || pumpkin.parentId) continue;
-      const target = findRoamingTarget(pumpkin, pumpkins, context, { random });
+      const target = findRoamingTarget(pumpkin, pumpkins, context, {
+        random,
+        minDistance: settings.roamingMinDistance ?? DEFAULT_ROAMING_SETTINGS.roamingMinDistance,
+        maxDistance: settings.roamingMaxDistance ?? DEFAULT_ROAMING_SETTINGS.roamingMaxDistance,
+      });
       if (!target) continue;
       const current = db.getPumpkin(pumpkin.id);
       if (!current || current.isAirborne || current.parentId
         || !destinationIsAvailable(current, target.x, target.y, db.listPumpkins(), context)) continue;
       const updated = db.updatePumpkin(current.id, { x: target.x, y: target.y });
       cursor = (index + 1) % pumpkins.length;
-      const movement = { id: updated.id, x: updated.x, y: updated.y, isAirborne: false, sequence: -1, movementType: 'roam', roamingSpeed: settings.roamingSpeed ?? DEFAULT_ROAMING_SETTINGS.roamingSpeed };
+      const movement = { id: updated.id, x: updated.x, y: updated.y, isAirborne: false, sequence: -1, movementType: 'roam', roamingSpeed: settings.roamingSpeed ?? DEFAULT_ROAMING_SETTINGS.roamingSpeed, roamingJumpHeight: settings.roamingJumpHeight ?? DEFAULT_ROAMING_SETTINGS.roamingJumpHeight };
       broadcast('pumpkin:move', movement);
       return { id: updated.id, x: updated.x, y: updated.y };
     }

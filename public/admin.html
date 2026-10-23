@@ -111,10 +111,13 @@
                  </div>
                  <div>
                    <h3>Pumpkin movement</h3>
-                   <p class="muted">One eligible pumpkin starts moving after each interval. Speed is measured in scene pixels per second.</p>
+                   <p class="muted">One eligible pumpkin starts moving after each interval. Speed and jump distance are measured in scene pixels per second and pixels.</p>
                    <div class="form-grid">
                      <label>Movement interval (seconds)<input id="roaming-interval-seconds" type="number" min="1" max="60" step="1"></label>
                      <label>Movement speed (pixels/second)<input id="roaming-speed" type="number" min="40" max="400" step="10"></label>
+                     <label>Parabola height (pixels)<input id="roaming-jump-height" type="number" min="20" max="300" step="1"></label>
+                     <label>Minimum jump distance (pixels)<input id="roaming-min-distance" type="number" min="30" max="1800" step="1"></label>
+                     <label>Maximum jump distance (pixels)<input id="roaming-max-distance" type="number" min="30" max="1800" step="1"></label>
                    </div>
                    <p id="roaming-settings-state" class="save-state" role="status" aria-live="polite"></p>
                  </div>
@@ -277,6 +280,6 @@
     <div id="toast" class="toast" role="status"></div>
     <script src="/vendor/gsap.min.js"></script>
     <script src="/socket.io/socket.io.js"></script>
-    <script type="module" src="/js/admin-app.js?v=pumpkin-cartoon-squash-20261023"></script>
+    <script type="module" src="/js/admin-app.js?v=pumpkin-movement-distance-20261023"></script>
   </body>
 </html>

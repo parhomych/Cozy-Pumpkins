@@ -35,6 +35,9 @@ CREATE TABLE IF NOT EXISTS settings (
   tower_animation_json TEXT NOT NULL DEFAULT '{"swayAmplitude":12,"swayDuration":2,"rotationMultiplier":1,"bendMultiplier":1,"lifetimeMinSeconds":3,"lifetimeMaxSeconds":6,"stackOrder":"random"}',
   roaming_interval_seconds REAL NOT NULL DEFAULT 5,
   roaming_speed REAL NOT NULL DEFAULT 140,
+  roaming_jump_height REAL NOT NULL DEFAULT 60,
+  roaming_min_distance REAL NOT NULL DEFAULT 30,
+  roaming_max_distance REAL NOT NULL DEFAULT 240,
   updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS auth_tokens (

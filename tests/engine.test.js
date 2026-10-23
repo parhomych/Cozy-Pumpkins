@@ -491,17 +491,31 @@ test('roaming settings have safe defaults, persist, and validate their ranges', 
   assert.deepEqual({
     roamingIntervalSeconds: db.getSettings(config).roamingIntervalSeconds,
     roamingSpeed: db.getSettings(config).roamingSpeed,
+    roamingJumpHeight: db.getSettings(config).roamingJumpHeight,
+    roamingMinDistance: db.getSettings(config).roamingMinDistance,
+    roamingMaxDistance: db.getSettings(config).roamingMaxDistance,
   }, DEFAULT_ROAMING_SETTINGS);
-  assert.deepEqual(roamingSettingsPatch({ roamingIntervalSeconds: '8', roamingSpeed: '220' }), {
+  assert.deepEqual(roamingSettingsPatch({ roamingIntervalSeconds: '8', roamingSpeed: '220', roamingJumpHeight: '100', roamingMinDistance: '60', roamingMaxDistance: '450' }), {
     roamingIntervalSeconds: 8,
     roamingSpeed: 220,
+    roamingJumpHeight: 100,
+    roamingMinDistance: 60,
+    roamingMaxDistance: 450,
   });
   assert.throws(() => roamingSettingsPatch({ roamingIntervalSeconds: 0 }), { message: 'invalid_roamingIntervalSeconds' });
   assert.throws(() => roamingSettingsPatch({ roamingIntervalSeconds: 2.5 }), { message: 'invalid_roamingIntervalSeconds' });
   assert.throws(() => roamingSettingsPatch({ roamingSpeed: 401 }), { message: 'invalid_roamingSpeed' });
-  db.updateSettings(roamingSettingsPatch({ roamingIntervalSeconds: 8, roamingSpeed: 220 }), config);
+  assert.throws(() => roamingSettingsPatch({ roamingJumpHeight: 19 }), { message: 'invalid_roamingJumpHeight' });
+  assert.throws(() => roamingSettingsPatch({ roamingJumpHeight: 100.5 }), { message: 'invalid_roamingJumpHeight' });
+  assert.throws(() => roamingSettingsPatch({ roamingMinDistance: 29 }), { message: 'invalid_roamingMinDistance' });
+  assert.throws(() => roamingSettingsPatch({ roamingMaxDistance: 1801 }), { message: 'invalid_roamingMaxDistance' });
+  assert.throws(() => roamingSettingsPatch({ roamingMinDistance: 250, roamingMaxDistance: 200 }), { message: 'invalid_roaming_distance_range' });
+  db.updateSettings(roamingSettingsPatch({ roamingIntervalSeconds: 8, roamingSpeed: 220, roamingJumpHeight: 100, roamingMinDistance: 60, roamingMaxDistance: 450 }), config);
   assert.equal(db.getSettings(config).roamingIntervalSeconds, 8);
   assert.equal(db.getSettings(config).roamingSpeed, 220);
+  assert.equal(db.getSettings(config).roamingJumpHeight, 100);
+  assert.equal(db.getSettings(config).roamingMinDistance, 60);
+  assert.equal(db.getSettings(config).roamingMaxDistance, 450);
   db.close();
 });
 
@@ -548,9 +562,18 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
    assert.equal(ioEvents.at(-1)[0], 'settings:updated');
    assert.equal(ioEvents.at(-1)[1].settings.roamingIntervalSeconds, 7);
    assert.equal(ioEvents.at(-1)[1].settings.roamingSpeed, 180);
+   socketEvents.get('admin:settings:update')({ roamingJumpHeight: 120 });
+   assert.equal(ioEvents.at(-1)[1].settings.roamingJumpHeight, 120);
+   socketEvents.get('admin:settings:update')({ roamingMinDistance: 70, roamingMaxDistance: 350 });
+   assert.equal(ioEvents.at(-1)[1].settings.roamingMinDistance, 70);
+   assert.equal(ioEvents.at(-1)[1].settings.roamingMaxDistance, 350);
+   socketEvents.get('admin:settings:update')({ roamingMinDistance: 351 });
+   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_roaming_distance_range' }]);
    assert.deepEqual(schedulerCalls, ['updated']);
    socketEvents.get('admin:settings:update')({ roamingSpeed: 500 });
    assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_roamingSpeed' }]);
+   socketEvents.get('admin:settings:update')({ roamingJumpHeight: 301 });
+   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_roamingJumpHeight' }]);
   socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 0 } });
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_animation' }]);
   socketEvents.get('admin:settings:update')({ rewardMapping: { inflate: 'reward-inflate' } });
@@ -940,7 +963,7 @@ test('existing databases migrate name visibility fields with enabled defaults', 
     const donation = new DonationService({ db, config, idFactory: () => 'legacy-name-pumpkin' });
     const result = donation.handle({ id: 'legacy-name-donation', name: 'Legacy Viewer', amount: 100, currency: 'RUB', message: '!тыковка' });
     assert.equal(result.pumpkin.displayName, 'Legacy Viewer');
-    db.sqlite.exec('ALTER TABLE settings DROP COLUMN show_pumpkin_names; ALTER TABLE settings DROP COLUMN pumpkin_name_font_size; ALTER TABLE settings DROP COLUMN roaming_interval_seconds; ALTER TABLE settings DROP COLUMN roaming_speed; ALTER TABLE pumpkins DROP COLUMN show_display_name;');
+    db.sqlite.exec('ALTER TABLE settings DROP COLUMN show_pumpkin_names; ALTER TABLE settings DROP COLUMN pumpkin_name_font_size; ALTER TABLE settings DROP COLUMN roaming_interval_seconds; ALTER TABLE settings DROP COLUMN roaming_speed; ALTER TABLE settings DROP COLUMN roaming_jump_height; ALTER TABLE settings DROP COLUMN roaming_min_distance; ALTER TABLE settings DROP COLUMN roaming_max_distance; ALTER TABLE pumpkins DROP COLUMN show_display_name;');
     db.close();
 
     const legacy = new Database(databasePath);
@@ -948,6 +971,9 @@ test('existing databases migrate name visibility fields with enabled defaults', 
     assert.equal(legacy.getSettings(config).pumpkinNameFontSize, 14);
     assert.equal(legacy.getSettings(config).roamingIntervalSeconds, DEFAULT_ROAMING_SETTINGS.roamingIntervalSeconds);
     assert.equal(legacy.getSettings(config).roamingSpeed, DEFAULT_ROAMING_SETTINGS.roamingSpeed);
+    assert.equal(legacy.getSettings(config).roamingJumpHeight, DEFAULT_ROAMING_SETTINGS.roamingJumpHeight);
+    assert.equal(legacy.getSettings(config).roamingMinDistance, DEFAULT_ROAMING_SETTINGS.roamingMinDistance);
+    assert.equal(legacy.getSettings(config).roamingMaxDistance, DEFAULT_ROAMING_SETTINGS.roamingMaxDistance);
     assert.equal(legacy.getPumpkin(result.pumpkin.id).showDisplayName, true);
     assert.equal(legacy.getPumpkin(result.pumpkin.id).displayName, 'Legacy Viewer');
     legacy.close();
@@ -993,6 +1019,20 @@ test('roaming pumpkins choose destinations with a minimum offset and avoid No-Go
   assert.ok(Math.abs(firstTarget.x - secondTarget.x) >= 128);
   assert.ok(isPositionValid(first, firstTarget.x, firstTarget.y, context));
   assert.ok(isPositionValid(second, secondTarget.x, secondTarget.y, context));
+});
+
+test('roaming target respects the configured minimum and maximum jump distances', () => {
+  const config = testConfig();
+  const context = { scene: config.scene, growthMultipliers: { stage1: 0.58 }, noGoZone: { enabled: false } };
+  const pumpkin = { id: 'distance-roamer', stage: 1, x: 500, y: config.scene.groundY };
+  const target = findRoamingTarget(pumpkin, [pumpkin], context, {
+    minDistance: 200,
+    maxDistance: 300,
+    random: () => 0.9,
+  });
+  assert.ok(target);
+  const distance = Math.abs(target.x - pumpkin.x);
+  assert.ok(distance >= 200 && distance <= 300, `expected 200–300 px, got ${distance}`);
 });
 
 test('roaming can escape an overlapping spawn by hopping over blockers', () => {
@@ -1081,7 +1121,7 @@ test('movement scheduler persists and broadcasts the validated final position', 
       { x: target.x, y: target.y },
     );
     assert.deepEqual(events.at(-1), ['pumpkin:move', {
-      id: pumpkin.id, x: target.x, y: target.y, isAirborne: false, sequence: -1, movementType: 'roam', roamingSpeed: DEFAULT_ROAMING_SETTINGS.roamingSpeed,
+      id: pumpkin.id, x: target.x, y: target.y, isAirborne: false, sequence: -1, movementType: 'roam', roamingSpeed: DEFAULT_ROAMING_SETTINGS.roamingSpeed, roamingJumpHeight: DEFAULT_ROAMING_SETTINGS.roamingJumpHeight,
     }]);
   } finally {
     scheduler.stop();

@@ -24,7 +24,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
   router.get('/status', (req, res) => res.json({ ok: true, config: publicConfig(config), integrations: statusesPayload(statuses), devSimulator: config.nodeEnv !== 'production', serverTime: new Date().toISOString() }));
   router.get('/pumpkins', (req, res) => res.json({ pumpkins: db.listPumpkins().map(publicPumpkin) }));
   router.get('/pumpkins/:id', (req, res) => { const pumpkin = db.getPumpkin(req.params.id); return pumpkin ? res.json({ pumpkin: publicPumpkin(pumpkin) }) : res.status(404).json({ error: 'pumpkin_not_found' }); });
-  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers, roamingIntervalSeconds: settings.roamingIntervalSeconds, roamingSpeed: settings.roamingSpeed }, customizationCatalog: customizationCatalog() }); });
+  router.get('/settings', (req, res) => { const settings = db.getSettings(config); res.json({ settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers, roamingIntervalSeconds: settings.roamingIntervalSeconds, roamingSpeed: settings.roamingSpeed, roamingJumpHeight: settings.roamingJumpHeight, roamingMinDistance: settings.roamingMinDistance, roamingMaxDistance: settings.roamingMaxDistance }, customizationCatalog: customizationCatalog() }); });
 
   for (const provider of ['twitch', 'donationalerts', 'donatex', 'memealerts']) {
     router.get(`/auth/${provider}`, requireAdminSession, (req, res) => {
@@ -138,7 +138,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
   router.patch('/settings', requireAdminSession, (req, res) => {
     try {
        const body = req.body || {}; const current = db.getSettings(config); const patch = {};
-       Object.assign(patch, roamingSettingsPatch(body));
+       Object.assign(patch, roamingSettingsPatch(body, current));
        if (body.growthThresholds !== undefined) patch.growthThresholds = validateGrowthThresholds(body.growthThresholds);
        if (body.growthStages !== undefined) patch.growthStages = validateGrowthStages(body.growthStages);
        if (body.growthMultipliers !== undefined) patch.growthMultipliers = validateGrowthMultipliers(body.growthMultipliers);
@@ -174,7 +174,7 @@ export function createApiRouter({ config, db, statuses, oauth, tokenStore, donat
       });
       if (patch.roamingIntervalSeconds !== undefined) onMovementSettingsUpdated();
       for (const pumpkin of relocated) broadcast('pumpkin:updated', { pumpkin });
-       broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers, roamingIntervalSeconds: settings.roamingIntervalSeconds, roamingSpeed: settings.roamingSpeed } });
+       broadcast('settings:updated', { settings: { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers, roamingIntervalSeconds: settings.roamingIntervalSeconds, roamingSpeed: settings.roamingSpeed, roamingJumpHeight: settings.roamingJumpHeight, roamingMinDistance: settings.roamingMinDistance, roamingMaxDistance: settings.roamingMaxDistance } });
       broadcast('settings:nogo-updated', { noGoZone: settings.noGoZone }); return res.json({ settings });
     } catch (error) { return safeError(res, error); }
   });

@@ -376,7 +376,7 @@ export class PumpkinCharacter {
     }));
   }
 
-  hopTo(x, y, { duration = null, speed = 140 } = {}) {
+  hopTo(x, y, { duration = null, speed = 140, height = null } = {}) {
     const targetX = Number.isFinite(Number(x)) ? Number(x) : this.x;
     const targetY = Number.isFinite(Number(y)) ? Number(y) : this.y;
     const gsap = this._gsap();
@@ -391,7 +391,10 @@ export class PumpkinCharacter {
     const totalDuration = Number.isFinite(Number(duration)) && Number(duration) > 0
       ? Number(duration)
       : Math.max(.18, distance / safeSpeed);
-    const hopHeight = Math.max(36, this.stageSize * .42);
+    const configuredHeight = Number(height);
+    const hopHeight = Number.isFinite(configuredHeight) && configuredHeight > 0
+      ? configuredHeight
+      : Math.max(36, this.stageSize * .42);
     const takeoffSquashDuration = Math.max(.35, Math.min(.55, totalDuration * .2));
     const takeoffReleaseDuration = Math.max(.5, Math.min(.7, totalDuration * .25));
     const landingSquashDuration = Math.max(.35, Math.min(.5, totalDuration * .18));

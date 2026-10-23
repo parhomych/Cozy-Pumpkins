@@ -51,7 +51,7 @@ Open `http://localhost:3000/admin.html` for the control panel. Add `http://local
 
 The development-only donation simulator appears in the admin panel when `NODE_ENV` is not `production`. It exercises the same server-side donation path and deduplication logic as an integration event. The Twitch reward section also exposes a local **Test Pumpkin tower activation** button that runs the global tower animation without Twitch credentials or a real redemption.
 The tower's fall delay can be randomized by setting minimum and maximum seconds in **Scene settings → Pumpkin tower animation**. Each activation chooses one delay on the server and shares it between the admin preview and OBS.
-Autonomous pumpkin movement can be tuned in **Scene settings → Pumpkin movement**. The interval controls how often an eligible pumpkin starts moving, and speed is measured in logical scene pixels per second.
+Autonomous pumpkin movement can be tuned in **Scene settings → Pumpkin movement**. The interval controls how often an eligible pumpkin starts moving, speed is measured in logical scene pixels per second, parabola height sets the jump's peak above its route in logical pixels, and minimum/maximum jump distance set the horizontal travel range.
 Donor names can be shown or hidden globally in the admin panel, with a separate visibility option for each pumpkin. Set their shared font size in **Scene settings → Donor name appearance**; the labels use Tahoma with white text and a black outline.
 The same section lets you choose whether tower layers are filled in a random pumpkin order or from largest to smallest; random is the default.
 

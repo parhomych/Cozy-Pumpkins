@@ -67,7 +67,7 @@ export class PumpkinRenderer {
       const character = this.characters.get(payload.id);
       if (character?.hopTo) {
         this.stopPhysics(payload.id);
-        character.hopTo(payload.x, payload.y, { speed: payload.roamingSpeed ?? this.settings.roamingSpeed });
+        character.hopTo(payload.x, payload.y, { speed: payload.roamingSpeed ?? this.settings.roamingSpeed, height: payload.roamingJumpHeight ?? this.settings.roamingJumpHeight });
         return;
       }
     }

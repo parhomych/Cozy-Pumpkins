@@ -1,5 +1,5 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=pumpkin-cartoon-squash-20261023';
-import { PumpkinCharacter } from './shared/pumpkin-character.js?v=pumpkin-cartoon-squash-20261023';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=pumpkin-jump-height-setting-20261023';
+import { PumpkinCharacter } from './shared/pumpkin-character.js?v=pumpkin-jump-height-setting-20261023';
 import { eventToLogical, rectToCss, clamp } from './shared/coordinate-mapper.js';
 import { bindPersistentDisclosures } from './admin-disclosures.js';
 
@@ -19,8 +19,8 @@ const ANIMATION_MAX = 10;
 const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
 const TOWER_ANIMATION_LIMITS = Object.freeze({ swayAmplitude: { min: 0, max: 60 }, swayDuration: { min: 0.1, max: 30 }, rotationMultiplier: { min: 0, max: 5 }, bendMultiplier: { min: 0, max: 5 }, lifetimeMinSeconds: { min: 1, max: 300 }, lifetimeMaxSeconds: { min: 1, max: 300 } });
 const TOWER_ANIMATION_INPUTS = Object.freeze({ swayAmplitude: 'tower-sway-amplitude', swayDuration: 'tower-sway-duration', rotationMultiplier: 'tower-rotation-multiplier', bendMultiplier: 'tower-bend-multiplier', lifetimeMinSeconds: 'tower-lifetime-min-seconds', lifetimeMaxSeconds: 'tower-lifetime-max-seconds', stackOrder: 'tower-stack-order' });
-const ROAMING_SETTING_INPUTS = Object.freeze({ roamingIntervalSeconds: 'roaming-interval-seconds', roamingSpeed: 'roaming-speed' });
-const ROAMING_SETTING_LIMITS = Object.freeze({ roamingIntervalSeconds: { min: 1, max: 60 }, roamingSpeed: { min: 40, max: 400 } });
+const ROAMING_SETTING_INPUTS = Object.freeze({ roamingIntervalSeconds: 'roaming-interval-seconds', roamingSpeed: 'roaming-speed', roamingJumpHeight: 'roaming-jump-height', roamingMinDistance: 'roaming-min-distance', roamingMaxDistance: 'roaming-max-distance' });
+const ROAMING_SETTING_LIMITS = Object.freeze({ roamingIntervalSeconds: { min: 1, max: 60 }, roamingSpeed: { min: 40, max: 400 }, roamingJumpHeight: { min: 20, max: 300 }, roamingMinDistance: { min: 30, max: 1800 }, roamingMaxDistance: { min: 30, max: 1800 } });
 const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost', 'pumpkin_tower']);
 const DEFAULT_REWARD_MAPPING = Object.freeze(Object.fromEntries(REWARD_ACTIONS.map((action) => [action, ''])));
 
@@ -29,7 +29,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const canvas = $('#scene-canvas'); const previewFrame = $('#preview-frame'); const zoneElement = $('#nogo-zone');
 const renderer = new PumpkinRenderer(canvas, { interactive: true, onSelect: (id, pumpkin, event) => { selectPumpkin(id); if (event) beginDrag(id, event); } });
 const DEFAULT_GROWTH_STAGES = Object.freeze({ stage2: true, stage3: true, stage4: true });
-const state = { pumpkins: new Map(), settings: { groundY: 1080, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 }, showPumpkinNames: true, pumpkinNameFontSize: 14, animation: { ...DEFAULT_ANIMATION }, towerAnimation: { ...DEFAULT_TOWER_ANIMATION }, roamingIntervalSeconds: 5, roamingSpeed: 140, rewardMapping: { ...DEFAULT_REWARD_MAPPING }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS }, growthStages: { ...DEFAULT_GROWTH_STAGES }, growthMultipliers: { ...DEFAULT_GROWTH_MULTIPLIERS }, pumpkinCurrency: 'RUB', minSpawnDonation: 0, spawnCommand: '!тыковка' }, customizationCatalog: [], catalogCharacters: [], growthCharacters: [], growthDirty: false, twitchRewards: [], selectedId: null, socket: null, drag: null, zoneDrag: null, settingsSaveTimer: null, previewCharacter: null };
+const state = { pumpkins: new Map(), settings: { groundY: 1080, noGoZone: { enabled: false, x: 0, y: 0, width: 0, height: 0 }, showPumpkinNames: true, pumpkinNameFontSize: 14, animation: { ...DEFAULT_ANIMATION }, towerAnimation: { ...DEFAULT_TOWER_ANIMATION }, roamingIntervalSeconds: 5, roamingSpeed: 140, roamingJumpHeight: 60, roamingMinDistance: 30, roamingMaxDistance: 240, rewardMapping: { ...DEFAULT_REWARD_MAPPING }, growthThresholds: { ...DEFAULT_GROWTH_THRESHOLDS }, growthStages: { ...DEFAULT_GROWTH_STAGES }, growthMultipliers: { ...DEFAULT_GROWTH_MULTIPLIERS }, pumpkinCurrency: 'RUB', minSpawnDonation: 0, spawnCommand: '!тыковка' }, customizationCatalog: [], catalogCharacters: [], growthCharacters: [], growthDirty: false, twitchRewards: [], selectedId: null, socket: null, drag: null, zoneDrag: null, settingsSaveTimer: null, previewCharacter: null };
 
 function toast(message) { const el = $('#toast'); if (!el) return; el.textContent = message; el.classList.add('visible'); clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('visible'), 2600); }
 function setSocketState(label, kind = '') { $('#socket-status').textContent = label; const dot = $('#socket-dot'); dot.className = `status-dot ${kind}`; }
@@ -60,13 +60,15 @@ function saveRoamingSettings() {
     const input = $(`#${id}`);
     const limits = ROAMING_SETTING_LIMITS[key];
     const value = Number(input.value);
-    const valid = input.value.trim() !== '' && Number.isFinite(value) && value >= limits.min && value <= limits.max;
+    const requiresInteger = key !== 'roamingSpeed';
+    const valid = input.value.trim() !== '' && Number.isFinite(value) && value >= limits.min && value <= limits.max && (!requiresInteger || Number.isInteger(value));
     input.setCustomValidity(valid ? '' : `Use a value from ${limits.min} to ${limits.max}.`);
     input.toggleAttribute('aria-invalid', !valid);
     if (valid) patch[key] = value;
   }
-  if (Object.keys(patch).length !== Object.keys(ROAMING_SETTING_INPUTS).length) {
-    $('#roaming-settings-state').textContent = 'Check the movement interval and speed.';
+  if (Object.keys(patch).length !== Object.keys(ROAMING_SETTING_INPUTS).length
+    || patch.roamingMinDistance > patch.roamingMaxDistance) {
+    $('#roaming-settings-state').textContent = 'Check the movement values and ensure minimum distance does not exceed maximum distance.';
     return;
   }
   if (!state.socket?.connected) {
@@ -581,7 +583,7 @@ function wireUI() {
       $('#eye-frequency').addEventListener('input', () => setAnimationSettings({ eyeFrequency: $('#eye-frequency').value })); $('#mouth-frequency').addEventListener('input', () => setAnimationSettings({ mouthFrequency: $('#mouth-frequency').value }));
    $$('input[id^="tower-"]').forEach((input) => input.addEventListener('input', () => { const values = readTowerAnimationSettings(); if (values) setTowerAnimationSettings(values); }));
    $('#tower-stack-order').addEventListener('change', () => { const values = readTowerAnimationSettings(); if (values) setTowerAnimationSettings(values); });
-   $$('#roaming-interval-seconds, #roaming-speed').forEach((input) => input.addEventListener('change', saveRoamingSettings));
+   $$('#roaming-interval-seconds, #roaming-speed, #roaming-jump-height, #roaming-min-distance, #roaming-max-distance').forEach((input) => input.addEventListener('change', saveRoamingSettings));
    $('#save-reward-mapping').addEventListener('click', saveRewardMapping); $('#refresh-twitch-rewards').addEventListener('click', () => void loadTwitchRewards()); $('#test-pumpkin-tower').addEventListener('click', () => void testPumpkinTower());
   $$('.provider-action').forEach((button) => button.addEventListener('click', () => providerAction(button.dataset.provider, button.dataset.connected === 'true')));
   $$('#inspector-form [data-slot]').forEach((select) => select.addEventListener('change', () => { const p = selected(); if (!p) return; const customization = { ...p.customization, [select.dataset.slot]: select.value }; patchPumpkin({ customization }, { persist: false }); }));
@@ -637,4 +639,16 @@ function wireUI() {
 }
 async function loadStatus() { try { const response = await fetch('/api/status'); const data = await response.json(); for (const item of data.integrations || []) updateProviderCard(item); const exposed = data.devSimulator || data.features?.donationSimulator; if (exposed) { $('#simulator').hidden = false; $('#test-pumpkin-tower').hidden = false; } } catch { /* Socket.IO remains the source of live state. */ } }
 bindPersistentDisclosures($$('details'));
-wireUI(); connectSocket(); loadStatus(); loadSpawnSettings(); renderZone(); renderAnimationSettings(); renderTowerAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages();
+wireUI(); connectSocket();
+state.socket?.on('settings:updated', ({ settings } = {}) => {
+  if (Object.keys(ROAMING_SETTING_INPUTS).some((key) => settings?.[key] !== undefined)) {
+    $('#roaming-settings-state').textContent = 'Movement settings saved.';
+  }
+});
+state.socket?.on('operation:error', ({ message } = {}) => {
+  if (message?.startsWith('invalid_roaming') || message === 'invalid_roaming_distance_range') {
+    $('#roaming-settings-state').textContent = 'The server rejected the movement settings. Check the entered values and distance range.';
+    renderRoamingSettings();
+  }
+});
+loadStatus(); loadSpawnSettings(); renderZone(); renderAnimationSettings(); renderTowerAnimationSettings(); renderRewardMapping(); renderSpawnSettings(); renderGrowthStages();
