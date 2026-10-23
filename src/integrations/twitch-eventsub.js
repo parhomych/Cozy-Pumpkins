@@ -1,6 +1,5 @@
 const EVENTSUB_URL = 'wss://eventsub.wss.twitch.tv/ws';
 const REDEMPTION_TYPE = 'channel.channel_points_custom_reward_redemption.add';
-const MAX_RECONNECT_ATTEMPTS = 8;
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
 function listen(socket, type, handler) {
@@ -20,6 +19,7 @@ export class TwitchEventSub {
   constructor({
     tokenStore,
     twitchApi,
+    getAccessToken = null,
     statuses,
     onRedemption,
     broadcast = () => {},
@@ -28,8 +28,7 @@ export class TwitchEventSub {
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout,
   } = {}) {
-    this.tokenStore = tokenStore;
-    this.twitchApi = twitchApi;
+    Object.assign(this, { tokenStore, twitchApi, getAccessToken });
     this.statuses = statuses;
     this.onRedemption = onRedemption;
     this.broadcast = broadcast;
@@ -68,9 +67,32 @@ export class TwitchEventSub {
     this.token = token;
     this.broadcasterId = token.providerUserId;
     this.reconnectAttempts = 0;
-    this.setStatus('Disconnected', 'Connecting to Twitch live events.');
+    this.setStatus('Retrying', 'Connecting to Twitch live events.');
+    try {
+      await this.refreshAccessToken();
+    } catch (error) {
+      if (this.isRetryableConnectionError(error)) {
+        this.scheduleReconnect('Twitch authorization refresh is temporarily unavailable.');
+        return true;
+      }
+      this.running = false;
+      this.setStatus('Error', 'Twitch authorization expired. Reconnect Twitch to resume.');
+      return false;
+    }
     this.connect(EVENTSUB_URL, true);
     return true;
+  }
+
+  async refreshAccessToken() {
+    if (!this.getAccessToken) return this.token?.accessToken;
+    const accessToken = await this.getAccessToken();
+    if (typeof accessToken !== 'string' || !accessToken) throw new Error('twitch_not_connected');
+    if (this.token) this.token = { ...this.token, accessToken };
+    return accessToken;
+  }
+
+  isRetryableConnectionError(error) {
+    return /_(?:timeout|unavailable|rate_limited)$/u.test(String(error?.message || ''));
   }
 
   connect(url, subscribe) {
@@ -114,14 +136,18 @@ export class TwitchEventSub {
       this.resetKeepalive(socket);
       if (subscribe) {
         try {
+          const accessToken = await this.refreshAccessToken();
           await this.twitchApi.createRedemptionSubscription({
-            accessToken: this.token.accessToken,
+            accessToken,
             broadcasterId: this.broadcasterId,
             sessionId: session.id,
           });
         } catch (error) {
           if (this.socket === socket && this.generation === generation) {
-            if (error?.message === 'twitch_auth_failed' || error?.message === 'twitch_scope_missing') {
+            if (!this.isRetryableConnectionError(error)
+              && (error?.message === 'twitch_auth_failed' || error?.message === 'twitch_scope_missing'
+                || String(error?.message || '').startsWith('twitch_oauth_')
+                || error?.message === 'twitch_refresh_token_missing')) {
               this.running = false;
               this.clearTimers();
               this.setStatus('Error', error.message === 'twitch_scope_missing'
@@ -196,13 +222,7 @@ export class TwitchEventSub {
     if (this.keepaliveTimer) this.clearTimeout(this.keepaliveTimer);
     this.keepaliveTimer = null;
     this.reconnectAttempts += 1;
-    if (this.reconnectAttempts > MAX_RECONNECT_ATTEMPTS) {
-      this.running = false;
-      this.setStatus('Error', `${message} Retry limit reached; reconnect Twitch to try again.`);
-      this.closeForReconnect(socket);
-      return;
-    }
-    const delay = Math.min(1000 * (2 ** (this.reconnectAttempts - 1)), MAX_RECONNECT_DELAY_MS);
+    const delay = Math.min(1000 * (2 ** Math.min(this.reconnectAttempts - 1, 5)), MAX_RECONNECT_DELAY_MS);
     this.setStatus('Retrying', message);
     this.reconnectTimer = this.setTimeout(() => {
       this.reconnectTimer = null;

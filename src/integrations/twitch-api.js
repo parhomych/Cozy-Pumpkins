@@ -9,11 +9,8 @@ function safeProviderError(status) {
 }
 
 export class TwitchApiClient {
-  constructor({ config, tokenStore, fetchImpl = globalThis.fetch, timeoutMs = 5000 } = {}) {
-    this.config = config;
-    this.tokenStore = tokenStore;
-    this.fetch = fetchImpl;
-    this.timeoutMs = timeoutMs;
+  constructor({ config, tokenStore, getAccessToken = null, fetchImpl = globalThis.fetch, timeoutMs = 5000 } = {}) {
+    Object.assign(this, { config, tokenStore, getAccessToken, fetch: fetchImpl, timeoutMs });
   }
 
   async request(path, { accessToken, method = 'GET', body } = {}) {
@@ -56,13 +53,14 @@ export class TwitchApiClient {
     const token = this.tokenStore?.get('twitch');
     if (!token?.accessToken) throw new Error('twitch_not_connected');
     if (!token.providerUserId) throw new Error('twitch_account_unavailable');
+    const accessToken = this.getAccessToken ? await this.getAccessToken() : token.accessToken;
 
     const rewards = [];
     let cursor = null;
     do {
       const query = new URLSearchParams({ broadcaster_id: token.providerUserId });
       if (cursor) query.set('after', cursor);
-      const data = await this.request(`/channel_points/custom_rewards?${query}`, { accessToken: token.accessToken });
+      const data = await this.request(`/channel_points/custom_rewards?${query}`, { accessToken });
       for (const reward of data?.data || []) {
         if (!reward?.id || typeof reward.title !== 'string') continue;
         rewards.push({

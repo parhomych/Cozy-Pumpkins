@@ -119,6 +119,33 @@ test('EventSub subscribes on welcome, delivers only valid redemptions, and resum
   assert.equal(statuses.at(-1).connectionStatus, 'Disconnected');
 });
 
+test('EventSub uses a refreshed Twitch access token when creating redemption subscriptions', async () => {
+  MockWebSocket.instances = [];
+  let tokenCalls = 0;
+  let subscribedWith;
+  const client = new TwitchEventSub({
+    tokenStore: { get: () => ({ accessToken: 'stale-token', providerUserId: 'broadcaster-1' }) },
+    getAccessToken: async () => `fresh-token-${++tokenCalls}`,
+    twitchApi: {
+      async createRedemptionSubscription(value) { subscribedWith = value.accessToken; },
+    },
+    statuses: { set: () => {} },
+    WebSocketImpl: MockWebSocket,
+    logger: { warn() {} },
+  });
+
+  await client.start();
+  MockWebSocket.instances[0].message({
+    metadata: { message_type: 'session_welcome' },
+    payload: { session: { id: 'session-fresh-token', keepalive_timeout_seconds: 10 } },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(tokenCalls, 2);
+  assert.equal(subscribedWith, 'fresh-token-2');
+  await client.stop();
+});
+
 test('EventSub keepalive timeout schedules reconnect and closes the socket once with a valid code', async () => {
   MockWebSocket.instances = [];
   const statuses = [];
@@ -151,6 +178,38 @@ test('EventSub keepalive timeout schedules reconnect and closes the socket once 
   assert.deepEqual(socket.closeCalls.map(({ code }) => code), [4001]);
   assert.equal(statuses.at(-1).connectionStatus, 'Retrying');
   assert.ok(timers.find((timer) => timer.delay === 1000 && !timer.cleared));
+  await client.stop();
+});
+
+test('EventSub keeps retrying after more than eight interruptions with a capped delay', async () => {
+  MockWebSocket.instances = [];
+  const timers = [];
+  const client = new TwitchEventSub({
+    tokenStore: { get: () => ({ accessToken: 'private-token', providerUserId: 'broadcaster-1' }) },
+    twitchApi: { async createRedemptionSubscription() { return {}; } },
+    statuses: { set: () => {} },
+    WebSocketImpl: MockWebSocket,
+    setTimeoutImpl: (callback, delay) => {
+      const timer = { callback, delay, cleared: false };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: (timer) => { if (timer) timer.cleared = true; },
+    logger: { warn() {} },
+  });
+
+  await client.start();
+  const retryDelays = [];
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    client.scheduleReconnect('Simulated temporary interruption.');
+    const retry = timers.filter((timer) => timer.delay <= 30_000 && !timer.cleared).at(-1);
+    retryDelays.push(retry.delay);
+    retry.callback();
+  }
+
+  assert.equal(client.running, true);
+  assert.equal(client.reconnectAttempts, 10);
+  assert.equal(retryDelays.at(-1), 30_000);
   await client.stop();
 });
 

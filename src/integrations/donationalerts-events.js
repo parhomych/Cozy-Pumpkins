@@ -6,6 +6,8 @@ const CLIENT_ID_PATTERN = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu;
 
 function safeApiError(error, fallback) {
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return `${fallback}_timeout`;
+  const reason = String(error?.message ?? '');
+  if (/^donationalerts_[a-z0-9_]+$/u.test(reason)) return reason;
   return fallback;
 }
 
@@ -39,9 +41,17 @@ export class DonationAlertsEvents {
     eventClientFactory = (options) => new LegacyCentrifugoEventClient(options),
     websocket = globalThis.WebSocket,
     logger = console,
+    retryDelays = [2000, 5000, 15000],
   } = {}) {
-    Object.assign(this, { oauth, tokenStore, onDonation, statuses, fetch: fetchImpl, eventClientFactory, websocket, logger });
+    Object.assign(this, {
+      oauth, tokenStore, onDonation, statuses, fetch: fetchImpl,
+      eventClientFactory, websocket, logger, retryDelays,
+    });
     this.client = null;
+    this.startPromise = null;
+    this.retryTimer = null;
+    this.retryAttempt = 0;
+    this.stopped = false;
   }
 
   async requestSubscriptionToken(channel, clientId) {
@@ -58,7 +68,12 @@ export class DonationAlertsEvents {
     } catch (error) {
       throw new Error(safeApiError(error, 'donationalerts_subscription_token_failed'));
     }
-    if (!response.ok) throw new Error('donationalerts_subscription_token_failed');
+    if (!response.ok) {
+      if (response.status === 408) throw new Error('donationalerts_subscription_token_failed_timeout');
+      if (response.status === 429) throw new Error('donationalerts_subscription_token_failed_rate_limited');
+      if (response.status >= 500) throw new Error('donationalerts_subscription_token_failed_unavailable');
+      throw new Error('donationalerts_subscription_token_failed');
+    }
     let body;
     try { body = await response.json(); } catch { throw new Error('donationalerts_subscription_token_invalid'); }
     const token = body?.channels?.find((item) => item.channel === channel)?.token;
@@ -68,6 +83,40 @@ export class DonationAlertsEvents {
 
   async start() {
     if (this.client) return;
+    if (this.startPromise) return this.startPromise;
+    this.stopped = false;
+    this.startPromise = this.startConnection();
+    try {
+      await this.startPromise;
+    } catch (error) {
+      const reason = safeApiError(error, 'donationalerts_connection_failed');
+      if (/(?:_timeout|_unavailable|_rate_limited)$/u.test(reason)) this.scheduleStartRetry(reason);
+      throw error;
+    } finally {
+      this.startPromise = null;
+    }
+  }
+
+  scheduleStartRetry(reason) {
+    if (this.stopped || this.retryTimer || !this.retryDelays.length) return;
+    const delay = this.retryDelays[Math.min(this.retryAttempt++, this.retryDelays.length - 1)];
+    this.statuses?.set('donationalerts', { connectionStatus: 'Retrying', message: reason });
+    this.logger.warn('DonationAlerts connection failed; retry scheduled.', {
+      provider: 'donationalerts',
+      reason,
+    });
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.start().catch((error) => {
+        this.logger.warn('DonationAlerts connection retry failed.', {
+          provider: 'donationalerts',
+          reason: safeApiError(error, 'donationalerts_connection_failed'),
+        });
+      });
+    }, delay);
+  }
+
+  async startConnection() {
     const token = this.tokenStore.get('donationalerts');
     if (!token?.accessToken) throw new Error('donationalerts_not_connected');
     const profile = await this.oauth.fetchIdentity('donationalerts', await this.oauth.getAccessToken('donationalerts'));
@@ -98,21 +147,30 @@ export class DonationAlertsEvents {
         if (event) this.onDonation(event);
         else this.logger.warn('DonationAlerts donation event was rejected', { provider: 'donationalerts', reason: 'invalid_event' });
       },
-      onStatus: (patch) => this.statuses?.set('donationalerts', patch),
+      onStatus: (patch) => {
+        this.statuses?.set('donationalerts', patch);
+        if (patch.connectionStatus === 'Listening') this.retryAttempt = 0;
+      },
       websocket: this.websocket,
       logger: this.logger,
     });
     this.client = client;
     try {
       await client.start();
+      this.retryAttempt = 0;
     } catch (error) {
       this.client = null;
+      client.stop?.();
       this.statuses?.set('donationalerts', { connectionStatus: 'Error', message: safeApiError(error, 'donationalerts_connection_failed') });
       throw error;
     }
   }
 
   async stop() {
+    this.stopped = true;
+    clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    this.retryAttempt = 0;
     const client = this.client;
     this.client = null;
     client?.stop();

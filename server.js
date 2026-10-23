@@ -35,16 +35,18 @@ export function createApp({ config = loadConfig(), db = null, logger = createLog
   const donations = new DonationService({ db: database, config, logger, emit: broadcast });
   const rewards = new RewardService({ db: database, config, logger, emit: broadcast });
   const twitchApi = new TwitchApiClient({ config, tokenStore, fetchImpl });
+  const oauth = new OAuthAdapters({ config, tokenStore, statuses, twitchApi, logger, fetchImpl });
+  twitchApi.getAccessToken = () => oauth.getAccessToken('twitch');
   const twitchEventSub = new TwitchEventSub({
     tokenStore,
     twitchApi,
+    getAccessToken: () => oauth.getAccessToken('twitch'),
     statuses,
     onRedemption: (event) => rewards.handle(event),
     WebSocketImpl,
     logger,
     broadcast,
   });
-  const oauth = new OAuthAdapters({ config, tokenStore, statuses, twitchApi, logger, fetchImpl });
   const providerEvents = {
     donationalerts: new DonationAlertsEvents({ ...providerEventFactories.donationalerts, oauth, tokenStore, statuses, onDonation: (event) => donations.handle(event), fetchImpl, websocket: WebSocketImpl, logger }),
     donatex: new DonatExEvents({ ...providerEventFactories.donatex, oauth, statuses, onDonation: (event) => donations.handle(event), logger }),

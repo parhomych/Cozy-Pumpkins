@@ -5,6 +5,8 @@ const RECONNECT_DELAYS = [0, 2000, 5000, 10000, 30000];
 const START_RETRY_DELAYS = [2000, 5000, 15000];
 
 function safeError(error, fallback) {
+  const reason = String(error?.message ?? '');
+  if (/^donatex_[a-z0-9_]+$/u.test(reason)) return reason;
   const name = String(error?.name ?? '').toLowerCase();
   return name.includes('timeout') || name.includes('abort') ? `${fallback}_timeout` : fallback;
 }
@@ -89,7 +91,9 @@ export class DonatExEvents {
 
   scheduleStartRetry(reason) {
     if (this.stopped || this.retryTimer) return;
-    const delay = this.retryDelays[this.retryAttempt++];
+    const delay = this.retryDelays.length
+      ? this.retryDelays[Math.min(this.retryAttempt++, this.retryDelays.length - 1)]
+      : undefined;
     if (delay === undefined) {
       this.statuses?.set('donatex', { connectionStatus: 'Error', message: reason });
       return;
@@ -104,6 +108,12 @@ export class DonatExEvents {
         });
       });
     }, delay);
+  }
+
+  shouldRetryStart(reason) {
+    return reason === 'donatex_connection_failed'
+      || reason === 'donatex_connection_closed'
+      || /_(?:timeout|unavailable|rate_limited)$/u.test(reason);
   }
 
   async startConnection() {
@@ -121,15 +131,16 @@ export class DonatExEvents {
       if (this.connection === connection) this.statuses?.set('donatex', { connectionStatus: 'Retrying', message: null });
     });
     connection.onreconnected(() => {
-      if (this.connection === connection) this.statuses?.set('donatex', { connectionStatus: 'Listening', message: null });
+      if (this.connection === connection) {
+        this.retryAttempt = 0;
+        this.statuses?.set('donatex', { connectionStatus: 'Listening', message: null });
+      }
     });
     connection.onclose((error) => {
       if (this.connection !== connection) return;
       this.connection = null;
-      this.statuses?.set('donatex', {
-        connectionStatus: 'Error',
-        message: error ? safeError(error, 'donatex_connection_closed') : 'donatex_connection_closed',
-      });
+      if (this.startingConnection === connection) return;
+      this.scheduleStartRetry(error ? safeError(error, 'donatex_connection_closed') : 'donatex_connection_closed');
     });
     this.statuses?.set('donatex', { connectionStatus: 'Retrying', message: null });
     try {
@@ -144,7 +155,8 @@ export class DonatExEvents {
       if (this.connection === connection) this.connection = null;
       if (this.startingConnection === connection) this.startingConnection = null;
       const reason = safeError(error, 'donatex_connection_failed');
-      if (isCurrentAttempt) this.scheduleStartRetry(reason);
+      if (isCurrentAttempt && this.shouldRetryStart(reason)) this.scheduleStartRetry(reason);
+      else if (isCurrentAttempt) this.statuses?.set('donatex', { connectionStatus: 'Error', message: reason });
       throw new Error(reason);
     }
   }

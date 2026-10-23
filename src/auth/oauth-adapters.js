@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 
 const PROVIDERS = new Set(['twitch', 'donationalerts', 'donatex', 'memealerts']);
-const DONATION_PROVIDERS = ['donationalerts', 'donatex', 'memealerts'];
+const TOKEN_PROVIDERS = ['twitch', 'donationalerts', 'donatex', 'memealerts'];
 const OAUTH = {
   twitch: {
     authorize: 'https://id.twitch.tv/oauth2/authorize',
@@ -32,13 +32,13 @@ function oauthState(secret, provider) {
   return `${provider}.${nonce}.${mac}`;
 }
 
-function tokenForm(response, provider, current = {}) {
+function tokenForm(response, provider, current = {}, now = Date.now) {
   const value = response?.data ?? response;
   if (!value?.access_token) throw new Error(`${provider}_oauth_invalid_response`);
   return {
     accessToken: value.access_token,
     refreshToken: value.refresh_token || current.refreshToken || null,
-    expiresAt: value.expires_in ? Math.floor(Date.now() / 1000) + Number(value.expires_in) : null,
+    expiresAt: value.expires_in ? Math.floor(now() / 1000) + Number(value.expires_in) : null,
     scopes: Array.isArray(value.scope) ? value.scope.join(' ') : value.scope || current.scopes || '',
     providerUserId: current.providerUserId || null,
     providerLogin: current.providerLogin || null,
@@ -102,7 +102,12 @@ export class OAuthAdapters {
       if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw new Error(`${errorCode}_timeout`);
       throw new Error(`${errorCode}_unavailable`);
     }
-    if (!response.ok) throw new Error(errorCode);
+    if (!response.ok) {
+      if (response.status === 408) throw new Error(`${errorCode}_timeout`);
+      if (response.status === 429) throw new Error(`${errorCode}_rate_limited`);
+      if (response.status >= 500) throw new Error(`${errorCode}_unavailable`);
+      throw new Error(errorCode);
+    }
     try {
       return response.status === 204 ? null : await response.json();
     } catch {
@@ -153,7 +158,7 @@ export class OAuthAdapters {
     }
     if (!this.fetch) throw new Error('fetch_unavailable');
     const response = await this.exchangeToken(provider, body);
-    const token = tokenForm(response, provider);
+    const token = tokenForm(response, provider, {}, this.now);
     let identity = null;
     try {
       identity = await this.fetchIdentity(provider, token.accessToken);
@@ -177,7 +182,7 @@ export class OAuthAdapters {
   }
 
   async getAccessToken(provider) {
-    if (!DONATION_PROVIDERS.includes(provider)) throw new Error('unsupported_provider');
+    if (!TOKEN_PROVIDERS.includes(provider)) throw new Error('unsupported_provider');
     const token = this.tokenStore.get(provider);
     if (!token?.accessToken) throw new Error(`${provider}_not_connected`);
     if (!token.refreshToken || !token.expiresAt || token.expiresAt > Math.floor(this.now() / 1000) + 60) return token.accessToken;
@@ -198,7 +203,7 @@ export class OAuthAdapters {
       grant_type: 'refresh_token',
       refresh_token: current.refreshToken,
     });
-    const next = tokenForm(response, provider, current);
+    const next = tokenForm(response, provider, current, this.now);
     this.tokenStore.save(provider, next);
     return next;
   }

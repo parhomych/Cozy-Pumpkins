@@ -70,7 +70,12 @@ export class MemeAlertsEvents {
     } catch (error) {
       throw new Error(safeApiError(error, 'memealerts_subscription_token_failed'));
     }
-    if (!response.ok) throw new Error('memealerts_subscription_token_failed');
+    if (!response.ok) {
+      if (response.status === 408) throw new Error('memealerts_subscription_token_failed_timeout');
+      if (response.status === 429) throw new Error('memealerts_subscription_token_failed_rate_limited');
+      if (response.status >= 500) throw new Error('memealerts_subscription_token_failed_unavailable');
+      throw new Error('memealerts_subscription_token_failed');
+    }
     let body;
     try { body = await response.json(); } catch { throw new Error('memealerts_subscription_token_invalid'); }
     const channels = body?.channels ?? body?.data?.channels;
@@ -99,8 +104,10 @@ export class MemeAlertsEvents {
       profile = await this.oauth.fetchIdentity('memealerts', await this.oauth.getAccessToken('memealerts'));
     } catch (error) {
       const reason = safeApiError(error, 'memealerts_profile_failed');
-      const retryable = /_(?:timeout|unavailable)$/u.test(reason);
-      const delay = retryable ? this.retryDelays[this.retryAttempt++] : undefined;
+      const retryable = /_(?:timeout|unavailable|rate_limited)$/u.test(reason);
+      const delay = retryable && this.retryDelays.length
+        ? this.retryDelays[Math.min(this.retryAttempt++, this.retryDelays.length - 1)]
+        : undefined;
       if (!this.stopped && delay !== undefined) {
         this.statuses?.set('memealerts', { connectionStatus: 'Retrying', message: reason });
         this.logger.warn('Meme Alerts profile lookup failed; retry scheduled.', {
@@ -171,7 +178,9 @@ export class MemeAlertsEvents {
 
   scheduleConnectionRetry(reason) {
     if (this.stopped || this.retryTimer) return;
-    const delay = this.retryDelays[this.retryAttempt++];
+    const delay = this.retryDelays.length
+      ? this.retryDelays[Math.min(this.retryAttempt++, this.retryDelays.length - 1)]
+      : undefined;
     const client = this.client;
     this.client = null;
     this.clientGeneration += 1;

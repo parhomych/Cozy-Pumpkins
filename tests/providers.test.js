@@ -138,6 +138,50 @@ test('DonatEx callback exchanges the code with its PKCE verifier and validates c
   assert.equal(calls.find((call) => call.url.endsWith('/api/v1/user/me')).options.headers.Authorization, 'Bearer private-access');
 });
 
+test('Twitch access tokens refresh before expiry and concurrent callers share the refresh', async () => {
+  const config = testConfig({ TWITCH_CLIENT_ID: 'twitch-client', TWITCH_CLIENT_SECRET: 'twitch-secret' });
+  const now = 1_800_000_000_000;
+  let token = {
+    accessToken: 'expired-soon-token',
+    refreshToken: 'private-refresh-token',
+    expiresAt: Math.floor(now / 1000) + 30,
+    scopes: 'channel:read:redemptions',
+    providerUserId: 'broadcaster-1',
+  };
+  const saved = [];
+  const calls = [];
+  const oauth = new OAuthAdapters({
+    config,
+    now: () => now,
+    tokenStore: {
+      get: () => token,
+      save: (_provider, next) => { token = next; saved.push(next); },
+    },
+    fetchImpl: async (url, options) => {
+      calls.push({ url: String(url), options });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return new Response(JSON.stringify({
+        access_token: 'fresh-twitch-token',
+        refresh_token: 'rotated-refresh-token',
+        expires_in: 3600,
+        scope: ['channel:read:redemptions'],
+      }));
+    },
+  });
+
+  assert.deepEqual(await Promise.all([
+    oauth.getAccessToken('twitch'),
+    oauth.getAccessToken('twitch'),
+  ]), ['fresh-twitch-token', 'fresh-twitch-token']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://id.twitch.tv/oauth2/token');
+  assert.equal(new URLSearchParams(calls[0].options.body).get('refresh_token'), 'private-refresh-token');
+  assert.equal(saved.length, 1);
+  assert.equal(token.refreshToken, 'rotated-refresh-token');
+  assert.equal(token.expiresAt, Math.floor(now / 1000) + 3600);
+  assert.equal(token.providerUserId, 'broadcaster-1');
+});
+
 test('Centrifugo adapter refreshes tokens through SDK callbacks and reports isolated lifecycle', async () => {
   const statuses = [];
   const statusMessages = [];
@@ -241,6 +285,66 @@ test('DonationAlerts adapter obtains a private channel token and emits normalize
   }]);
   await adapter.stop();
   assert.equal(normalizeDonationAlertsEvent({ id: 'broken' }), null);
+});
+
+test('DonationAlerts retries a timed-out profile lookup and recovers without a restart', async () => {
+  let identityCalls = 0;
+  let markListening;
+  const listening = new Promise((resolve) => { markListening = resolve; });
+  const statuses = [];
+  const adapter = new DonationAlertsEvents({
+    oauth: {
+      getAccessToken: async () => 'private-access-token',
+      fetchIdentity: async () => {
+        identityCalls += 1;
+        if (identityCalls === 1) throw new Error('donationalerts_profile_failed_timeout');
+        return { id: 'channel-1', socketConnectionToken: 'private-da-socket-token' };
+      },
+    },
+    tokenStore: { get: () => ({ accessToken: 'private-access-token', providerUserId: 'channel-1' }) },
+    onDonation() {},
+    statuses: { set: (provider, patch) => {
+      statuses.push({ provider, ...patch });
+      if (patch.connectionStatus === 'Listening') markListening();
+    } },
+    eventClientFactory: (options) => ({
+      async start() { options.onStatus({ connectionStatus: 'Listening', message: null }); },
+      stop() {},
+    }),
+    retryDelays: [0],
+    logger: { warn() {} },
+  });
+
+  await assert.rejects(adapter.start(), /donationalerts_profile_failed_timeout/u);
+  await listening;
+  assert.equal(identityCalls, 2);
+  assert.equal(statuses.at(-1).connectionStatus, 'Listening');
+  await adapter.stop();
+});
+
+test('DonationAlerts schedules recovery when its subscription token endpoint is temporarily unavailable', async () => {
+  const statuses = [];
+  const adapter = new DonationAlertsEvents({
+    oauth: {
+      getAccessToken: async () => 'private-access-token',
+      fetchIdentity: async () => ({ id: 'da-user-9', socketConnectionToken: 'private-socket-token' }),
+    },
+    tokenStore: { get: () => ({ accessToken: 'private-access-token', providerUserId: 'da-user-9' }) },
+    fetchImpl: async () => ({ ok: false, status: 503 }),
+    onDonation() {},
+    statuses: { set: (provider, patch) => statuses.push({ provider, ...patch }) },
+    eventClientFactory: (options) => ({
+      start: async () => options.getSubscriptionToken({}, '8bd33739-a3d1-4626-a57f-fcbce102f3af'),
+      stop() {},
+    }),
+    retryDelays: [0],
+    logger: { warn() {} },
+  });
+
+  await assert.rejects(adapter.start(), /donationalerts_subscription_token_failed_unavailable/u);
+  assert.equal(statuses.at(-1).connectionStatus, 'Retrying');
+  assert.equal(statuses.at(-1).message, 'donationalerts_subscription_token_failed_unavailable');
+  await adapter.stop();
 });
 
 test('DonationAlerts legacy Centrifugo client uses assigned client IDs and refreshes both private tokens', async () => {
@@ -706,7 +810,7 @@ test('DonatEx SignalR adapter reconnects and suppresses same-ID rerun events', a
   reconnected();
   assert.deepEqual(statuses.slice(-2).map((item) => item.status.connectionStatus), ['Retrying', 'Listening']);
   closed(new Error('transport details should not be exposed'));
-  assert.equal(statuses.at(-1).status.connectionStatus, 'Error');
+  assert.equal(statuses.at(-1).status.connectionStatus, 'Retrying');
   assert.notEqual(statuses.at(-1).status.message, 'transport details should not be exposed');
 });
 
@@ -737,10 +841,10 @@ test('DonatEx failed WebSocket startup reports an integration error without affe
 
   await assert.rejects(adapter.start(), /donatex_connection_failed/u);
   assert.equal(adapter.connection, null);
-  assert.deepEqual(statuses.slice(-2), [
-    { provider: 'donatex', patch: { connectionStatus: 'Error', message: 'donatex_connection_closed' } },
-    { provider: 'donatex', patch: { connectionStatus: 'Retrying', message: 'donatex_connection_failed' } },
-  ]);
+  assert.deepEqual(statuses.at(-1), {
+    provider: 'donatex',
+    patch: { connectionStatus: 'Retrying', message: 'donatex_connection_failed' },
+  });
   assert.equal(statuses.some(({ provider }) => provider !== 'donatex'), false);
   await adapter.stop();
 });
@@ -772,6 +876,37 @@ test('DonatEx retries a failed initial start and reports Listening after recover
 
   assert.equal(attempts, 2);
   assert.equal(statuses.at(-1).patch.connectionStatus, 'Listening');
+  await adapter.stop();
+});
+
+test('DonatEx schedules a new connection after an established SignalR session closes', async () => {
+  const statuses = [];
+  let closeHandler;
+  let connectionCount = 0;
+  const adapter = new DonatExEvents({
+    oauth: { getAccessToken: async () => 'private-donatex-token' },
+    onDonation() {},
+    statuses: { set: (provider, patch) => statuses.push({ provider, patch }) },
+    connectionFactory: () => {
+      connectionCount += 1;
+      return {
+        on() {},
+        onreconnecting() {},
+        onreconnected() {},
+        onclose(handler) { closeHandler = handler; },
+        start: async () => {},
+        stop: async () => {},
+      };
+    },
+    retryDelays: [5],
+    logger: { warn() {} },
+  });
+
+  await adapter.start();
+  closeHandler(new Error('temporary disconnect'));
+  assert.equal(statuses.at(-1).patch.connectionStatus, 'Retrying');
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(connectionCount, 2);
   await adapter.stop();
 });
 
