@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <svg viewBox="0 0 731 1024" width="731" height="1024">
+    <g id="joint" transform="translate(265 485)">
+      <g id="rotator1">
+        <rect x="-240" y="-64" width="262" height="110" fill="red" />
+      </g>
+    </g>
+    <g id="joint2" transform="translate(265 485)">
+      <g id="rotator2">
+        <rect x="-240" y="-64" width="262" height="110" fill="blue" />
+      </g>
+    </g>
+  </svg>
+  <script src="/vendor/gsap.min.js"></script>
+  <script>
+    // Test 1: without transformOrigin
+    gsap.set('#rotator1', { rotation: 30 });
+    // Test 2: with transformOrigin "0px 0px"
+    gsap.set('#rotator2', { transformOrigin: '0px 0px', rotation: 30 });
+  </script>
+</body>
+</html>

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="/public/css/overlay.css">
+  <style>
+    body {
+      background: #2b1f3d;
+      margin: 0;
+      padding: 0;
+      width: 1200px;
+      height: 600px;
+      position: relative;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+    .ground-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 80px;
+      height: 4px;
+      background: #503d6d;
+    }
+    #scene {
+      position: absolute;
+      inset: 0;
+      width: 1200px;
+      height: 600px;
+    }
+    .status-banner {
+      position: absolute;
+      top: 15px;
+      left: 20px;
+      font-size: 16px;
+      font-weight: bold;
+      color: #ffe6a0;
+      background: rgba(30, 20, 50, 0.85);
+      border: 1px solid #7d5bb0;
+      padding: 8px 16px;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="ground-line"></div>
+  <div id="scene"></div>
+  <div class="status-banner" id="status">Witch Assistant Magic Test</div>
+
+  <script src="/vendor/gsap.min.js"></script>
+  <script type="module">
+    import { PumpkinCharacter } from '/public/js/shared/pumpkin-character.js';
+    import { WitchAssistant } from '/public/js/shared/witch-assistant.js';
+
+    const scene = document.getElementById('scene');
+    const status = document.getElementById('status');
+
+    // Create a Stage 3 pumpkin sitting on the ground
+    const pumpkin = new PumpkinCharacter({
+      id: 'target-pumpkin',
+      stage: 3,
+      x: 600,
+      y: 520,
+      customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'none', prop: 'none' }
+    }, { positioning: 'scene' });
+
+    scene.appendChild(pumpkin.root);
+    pumpkin.setPositionImmediate(600, 520);
+    pumpkin.startIdle();
+
+    // Create WitchAssistant with custom speed & container bounds
+    const witch = new WitchAssistant(scene, {
+      scale: 0.28,
+      walkSpeed: 450,
+      screenWidth: 1200
+    });
+
+    window.witch = witch;
+    window.pumpkin = pumpkin;
+
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('pose') === 'magic') {
+      witch.setPosition(450, 520);
+      witch.setFacing(1);
+      witch.show();
+      witch.performMagic(100);
+      pumpkin.applyCustomization({ hat: 'witch', prop: 'cocoa_hands', eyes: 'stars' });
+      status.textContent = 'MAGIC CAST! Pumpkin transformed: Witch Hat + Cocoa!';
+    } else if (urlParams.get('pose') === 'magic_right') {
+      witch.setPosition(750, 520);
+      witch.setFacing(-1);
+      witch.show();
+      witch.performMagic(100);
+      pumpkin.applyCustomization({ hat: 'witch', prop: 'cocoa_hands', eyes: 'stars' });
+      status.textContent = 'MAGIC CAST from Right! Pumpkin transformed!';
+    } else {
+      // Trigger mission: change hat to 'witch' and prop to 'cocoa_hands'
+      witch.queueMission({
+        pumpkinCharacter: pumpkin,
+        targetCustomization: { hat: 'witch', prop: 'cocoa_hands', eyes: 'stars' },
+        groundY: 520,
+        side: 'left',
+        onApply: () => {
+          status.textContent = 'MAGIC CAST! Pumpkin transformed: Witch Hat + Cocoa!';
+          pumpkin.applyCustomization({ hat: 'witch', prop: 'cocoa_hands', eyes: 'stars' });
+        }
+      });
+      status.textContent = 'Witch is rushing to transform pumpkin...';
+    }
+  </script>
+</body>
+</html>

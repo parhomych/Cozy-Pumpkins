@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      background: #eae5d9;
+      margin: 0;
+      padding: 30px;
+      font-family: sans-serif;
+    }
+    .grid {
+      display: flex;
+      gap: 30px;
+      align-items: flex-end;
+    }
+    .card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: #f7f3ea;
+      padding: 20px;
+      border-radius: 12px;
+      border: 1px solid #d8cebe;
+    }
+    .card-title {
+      font-size: 16px;
+      font-weight: bold;
+      color: #333;
+      margin-bottom: 15px;
+    }
+    .witch-container {
+      width: 220px;
+      height: 308px;
+      position: relative;
+    }
+    svg.witch-character {
+      width: 100%;
+      height: 100%;
+      overflow: visible;
+    }
+  </style>
+</head>
+<body>
+  <h2>Witch Assistant Rigging & Pose Test</h2>
+  <div class="grid" id="poses-grid"></div>
+
+  <script src="/vendor/gsap.min.js"></script>
+  <script type="module">
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    function node(tag, attrs = {}) {
+      const el = document.createElementNS(SVG_NS, tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      return el;
+    }
+
+    function createWitchSvg() {
+      const svg = node('svg', {
+        class: 'witch-character',
+        viewBox: '0 0 731 1024',
+        'aria-hidden': 'true'
+      });
+
+      const root = node('g', { class: 'witch-root' });
+
+      function createJoint(className, pivotX, pivotY, imgHref, imgX, imgY, imgW, imgH) {
+        const joint = node('g', {
+          class: className,
+          transform: `translate(${pivotX} ${pivotY})`
+        });
+        const rotator = node('g', { class: 'rotator' });
+        const img = node('image', {
+          href: imgHref,
+          x: String(imgX - pivotX),
+          y: String(imgY - pivotY),
+          width: String(imgW),
+          height: String(imgH),
+          preserveAspectRatio: 'none'
+        });
+        rotator.appendChild(img);
+        joint.appendChild(rotator);
+        return { joint, rotator };
+      }
+
+      const wingL = createJoint('joint-wing-left', 265, 465, '/assets/witch/wing_left.png', 139, 420, 137, 186);
+      const wingR = createJoint('joint-wing-right', 435, 465, '/assets/witch/wing_right.png', 425, 420, 194, 196);
+      const tail = createJoint('joint-tail', 485, 715, '/assets/witch/tail.png', 470, 705, 177, 131);
+      const legL = createJoint('joint-leg-left', 280, 680, '/assets/witch/leg_left.png', 210, 640, 136, 368);
+      const legR = createJoint('joint-leg-right', 395, 680, '/assets/witch/leg_right.png', 345, 640, 126, 373);
+      const torso = createJoint('joint-torso', 365, 580, '/assets/witch/torso.png', 179, 453, 347, 298);
+      const head = createJoint('joint-head', 365, 440, '/assets/witch/head.png', 80, 21, 544, 450);
+      const armL = createJoint('joint-arm-left', 265, 485, '/assets/witch/arm_left.png', 25, 421, 262, 110);
+      const armR = createJoint('joint-arm-right', 435, 485, '/assets/witch/arm_right.png', 413, 449, 298, 117);
+
+      root.append(
+        wingL.joint, wingR.joint,
+        tail.joint,
+        legL.joint, legR.joint,
+        torso.joint,
+        head.joint,
+        armL.joint, armR.joint
+      );
+
+      svg.appendChild(root);
+      return {
+        svg, root,
+        wingL: wingL.rotator, wingR: wingR.rotator,
+        tail: tail.rotator,
+        legL: legL.rotator, legR: legR.rotator,
+        torso: torso.rotator,
+        head: head.rotator,
+        armL: armL.rotator, armR: armR.rotator
+      };
+    }
+
+    const grid = document.getElementById('poses-grid');
+
+    // Pose 1: Default T-Pose
+    {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = '<div class="card-title">1. Base T-Pose</div>';
+      const container = document.createElement('div');
+      container.className = 'witch-container';
+      const parts = createWitchSvg();
+      container.appendChild(parts.svg);
+      card.appendChild(container);
+      grid.appendChild(card);
+    }
+
+    // Pose 2: Standing Idle Pose (arms resting alongside body)
+    {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = '<div class="card-title">2. Standing Idle</div>';
+      const container = document.createElement('div');
+      container.className = 'witch-container';
+      const parts = createWitchSvg();
+      parts.armL.setAttribute('transform', 'rotate(-72)');
+      parts.armR.setAttribute('transform', 'rotate(72)');
+      parts.wingL.setAttribute('transform', 'rotate(10)');
+      parts.wingR.setAttribute('transform', 'rotate(-10)');
+      parts.tail.setAttribute('transform', 'rotate(8)');
+      parts.head.setAttribute('transform', 'rotate(2)');
+
+      container.appendChild(parts.svg);
+      card.appendChild(container);
+      grid.appendChild(card);
+    }
+
+    // Pose 3: Walking Step Pose (legs swing, arms counter-swing)
+    {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = '<div class="card-title">3. Walk Step</div>';
+      const container = document.createElement('div');
+      container.className = 'witch-container';
+      const parts = createWitchSvg();
+      parts.legL.setAttribute('transform', 'rotate(-26)');
+      parts.legR.setAttribute('transform', 'rotate(24)');
+      parts.armL.setAttribute('transform', 'rotate(-50)');
+      parts.armR.setAttribute('transform', 'rotate(90)');
+      parts.torso.setAttribute('transform', 'rotate(3)');
+      parts.wingL.setAttribute('transform', 'rotate(-18)');
+      parts.wingR.setAttribute('transform', 'rotate(18)');
+      parts.tail.setAttribute('transform', 'rotate(-12)');
+
+      container.appendChild(parts.svg);
+      card.appendChild(container);
+      grid.appendChild(card);
+    }
+
+    // Pose 4: Casting Magic (arms raised, waving towards target)
+    {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = '<div class="card-title">4. Casting Magic</div>';
+      const container = document.createElement('div');
+      container.className = 'witch-container';
+      const parts = createWitchSvg();
+      parts.armL.setAttribute('transform', 'rotate(25)');
+      parts.armR.setAttribute('transform', 'rotate(-25)');
+      parts.head.setAttribute('transform', 'rotate(-4)');
+      parts.wingL.setAttribute('transform', 'rotate(22)');
+      parts.wingR.setAttribute('transform', 'rotate(-22)');
+      parts.tail.setAttribute('transform', 'rotate(-15)');
+
+      container.appendChild(parts.svg);
+      card.appendChild(container);
+      grid.appendChild(card);
+    }
+  </script>
+</body>
+</html>

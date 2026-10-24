@@ -19,9 +19,9 @@ export const BLANKET_WIDTHS = Object.freeze([116, 136, 196, 236]);
 
 export const BLANKET_STAGE_CONFIG = Object.freeze({
   1: Object.freeze({ width: 116, height: 101.7, x: 50.39, y: 82 }),
-  2: Object.freeze({ width: 160, height: 74, x: 24.0, y: 155 }),
+  2: Object.freeze({ width: 136, height: 74, x: 40.0, y: 155 }),
   3: Object.freeze({ width: 196, height: 152, x: 12.0, y: 79 }),
-  4: Object.freeze({ width: 258, height: 162, x: -20.0, y: 76 }),
+  4: Object.freeze({ width: 236, height: 162, x: -9.0, y: 76 }),
 });
 const REFERENCE_VIEWBOX = 1095;
 const STAGE_ONE_VIEWBOX = Object.freeze({ x: 850, y: 80, width: 1100, height: 1380 });

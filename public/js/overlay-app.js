@@ -1,4 +1,4 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=pumpkin-cartoon-squash-20261023';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=witch-assistant-20261025';
 
 const connectionPill = document.querySelector('#connection-state');
 const canvas = document.querySelector('#overlay-scene');

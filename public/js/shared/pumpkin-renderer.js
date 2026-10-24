@@ -1,4 +1,5 @@
-import { PumpkinCharacter } from './pumpkin-character.js?v=pumpkin-cartoon-squash-20261023';
+import { PumpkinCharacter } from './pumpkin-character.js?v=witch-assistant-20261025';
+import { WitchAssistant } from './witch-assistant.js?v=witch-assistant-20261025';
 
 const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
 const DEFAULT_PUMPKIN_NAME_FONT_SIZE = 14;
@@ -8,10 +9,18 @@ function normalizePumpkinNameFontSize(size) {
   return Number.isInteger(value) && value >= 8 && value <= 48 ? value : DEFAULT_PUMPKIN_NAME_FONT_SIZE;
 }
 
+function hasVisualCustomizationChange(prev = {}, next = {}) {
+  const slots = ['eyes', 'mouth', 'hat', 'prop', 'skin'];
+  return slots.some((slot) => next[slot] !== undefined && next[slot] !== prev[slot]);
+}
+
 export class PumpkinRenderer {
-  constructor(container, { interactive = false, onSelect = null, settings = null } = {}) {
+  constructor(container, { interactive = false, onSelect = null, settings = null, enableWitch = true } = {}) {
     this.container = container; this.interactive = interactive; this.onSelect = onSelect; this.settings = { showPumpkinNames: true, pumpkinNameFontSize: DEFAULT_PUMPKIN_NAME_FONT_SIZE, ...(settings || {}) }; this.settings.pumpkinNameFontSize = normalizePumpkinNameFontSize(this.settings.pumpkinNameFontSize); this.characters = new Map(); this.sequence = new Map();
     this.container?.classList.add('pumpkin-layer'); this.towerTimers = new Set(); this.towerTweens = new Set(); this.towerMotion = null; this.towerParticipants = []; this.towerPayload = {}; this.towerSwayActive = false; this.towerRoll = null; this.physicsFrame = null; this.lastPhysicsFrameTime = null; this.depthSortTimer = null; this.towerDepthLevels = new Map(); this.towerDepthBaseY = null; this.movingCharacters = new Map(); this.moveOrder = 0;
+    this.witchAssistant = enableWitch && typeof document !== 'undefined' && container && typeof container.append === 'function'
+      ? new WitchAssistant(container, { screenWidth: 1920 })
+      : null;
   }
   add(pumpkin, { immediate = true } = {}) {
     if (!pumpkin?.id) return null;
@@ -25,9 +34,28 @@ export class PumpkinRenderer {
   update(pumpkin, { immediate = false } = {}) {
     const character = this.characters.get(pumpkin?.id); if (!character) return this.add(pumpkin, { immediate: true });
     const previousStage = character.data.stage;
-    character.data = { ...character.data, ...pumpkin, customization: pumpkin.customization || character.data.customization };
+    const previousCustomization = { ...(character.data.customization || {}) };
+    const nextCustomization = pumpkin.customization ? { ...pumpkin.customization } : previousCustomization;
+    character.data = { ...character.data, ...pumpkin, customization: nextCustomization };
     character.setNameVisibility(this.settings.showPumpkinNames);
-    if (pumpkin.customization) character.applyCustomization(pumpkin.customization);
+
+    const customizationChanged = Boolean(pumpkin.customization) && hasVisualCustomizationChange(previousCustomization, nextCustomization);
+
+    if (customizationChanged && !immediate && this.witchAssistant) {
+      this.witchAssistant.queueMission({
+        pumpkinCharacter: character,
+        targetCustomization: nextCustomization,
+        groundY: this.settings.groundY || 1080,
+        onApply: () => {
+          if (this.characters.has(character.data?.id)) {
+            character.applyCustomization(nextCustomization);
+          }
+        },
+      });
+    } else if (pumpkin.customization) {
+      character.applyCustomization(nextCustomization);
+    }
+
     if (pumpkin.stage !== undefined && Number(pumpkin.stage) !== Number(previousStage)) character.evolve(pumpkin.stage);
     this.stopPhysics(pumpkin.id);
     if (!immediate) this._bringToFront(pumpkin.id);
@@ -342,5 +370,5 @@ export class PumpkinRenderer {
   }
   setSelected(id) { for (const [key, character] of this.characters) character.root.classList.toggle('is-selected', key === id); }
   sync(pumpkins = []) { this.stopActions(); const ids = new Set(pumpkins.map((p) => p.id)); for (const id of [...this.characters.keys()]) if (!ids.has(id)) this.remove(id, { animate: false }); pumpkins.forEach((pumpkin) => this.add(pumpkin, { immediate: true })); }
-  destroy() { this.clear(); this.container?.classList.remove('pumpkin-layer'); }
+  destroy() { this.witchAssistant?.destroy(); this.clear(); this.container?.classList.remove('pumpkin-layer'); }
 }
