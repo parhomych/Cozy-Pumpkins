@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 933 818" width="933" height="818">
 <defs>
-  <clipPath id="front-clip">
-    <path d="M 0 270 L 120 278 L 200 260 L 260 276 L 300 295 L 340 310 L 380 323 L 420 340 L 460 354 L 480 364 L 500 353 L 540 326 L 580 307 L 620 290 L 660 270 L 740 260 L 820 270 L 933 270 L 933 818 L 0 818 Z" />
+  <clipPath id="front-clip" clip-rule="evenodd">
+    <path clip-rule="evenodd" d="M 0 0 L 933 0 L 933 818 L 0 818 Z M 140 0 L 820 0 L 820 103 L 805 106 L 790 115 L 775 185 L 760 205 L 740 223 L 720 237 L 700 249 L 680 259 L 660 267 L 640 277 L 620 285 L 600 293 L 580 303 L 560 313 L 540 323 L 520 337 L 500 353 L 485 364 L 475 363 L 460 355 L 440 346 L 420 338 L 400 330 L 380 323 L 360 315 L 340 309 L 320 301 L 300 293 L 280 285 L 260 273 L 240 261 L 220 245 L 200 227 L 185 210 L 170 189 L 155 84 L 140 70 Z" />
   </clipPath>
 </defs>
 <g clip-path="url(#front-clip)">

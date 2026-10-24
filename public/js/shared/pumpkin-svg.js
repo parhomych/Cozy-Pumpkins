@@ -15,13 +15,13 @@ import {
 
 export { COCOA_HANDS_STAGE_CONFIG, COCOA_HANDS_WIDTHS };
 
-export const BLANKET_WIDTHS = Object.freeze([116, 136, 180, 250]);
+export const BLANKET_WIDTHS = Object.freeze([116, 136, 196, 236]);
 
 export const BLANKET_STAGE_CONFIG = Object.freeze({
   1: Object.freeze({ width: 116, height: 101.7, x: 50.39, y: 82 }),
-  2: Object.freeze({ width: 136, height: 119.24, x: 40.39, y: 142 }),
-  3: Object.freeze({ width: 180, height: 157.81, x: 18.39, y: 77.83 }),
-  4: Object.freeze({ width: 250, height: 219.19, x: -16.61, y: 54 }),
+  2: Object.freeze({ width: 160, height: 74, x: 24.0, y: 155 }),
+  3: Object.freeze({ width: 196, height: 152, x: 12.0, y: 79 }),
+  4: Object.freeze({ width: 258, height: 162, x: -20.0, y: 76 }),
 });
 const REFERENCE_VIEWBOX = 1095;
 const STAGE_ONE_VIEWBOX = Object.freeze({ x: 850, y: 80, width: 1100, height: 1380 });
@@ -455,7 +455,7 @@ export function createPumpkinSvg(pumpkin = {}) {
       y: String(y),
       width: String(width),
       height: String(height),
-      preserveAspectRatio: 'xMidYMid meet',
+      preserveAspectRatio: 'none',
       'aria-hidden': 'true',
     });
     container.append(backArtwork);
@@ -547,7 +547,7 @@ export function createPumpkinSvg(pumpkin = {}) {
       y: String(y),
       width: String(width),
       height: String(height),
-      preserveAspectRatio: 'xMidYMid meet',
+      preserveAspectRatio: 'none',
       'aria-hidden': 'true',
     });
     container.append(frontArtwork);
