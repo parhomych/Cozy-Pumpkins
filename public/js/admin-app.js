@@ -1,5 +1,5 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=witch-assistant-20261025';
-import { PumpkinCharacter } from './shared/pumpkin-character.js?v=witch-assistant-20261025';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=twitch-customization-20261025';
+import { PumpkinCharacter } from './shared/pumpkin-character.js?v=twitch-customization-20261025';
 import { eventToLogical, rectToCss, clamp } from './shared/coordinate-mapper.js';
 import { bindPersistentDisclosures } from './admin-disclosures.js';
 
@@ -380,7 +380,10 @@ function setZone(next, { persist = true } = {}) {
   state.settings.noGoZone.width = clamp(Number(state.settings.noGoZone.width) || 0, 0, SCENE_WIDTH - state.settings.noGoZone.x); state.settings.noGoZone.height = clamp(Number(state.settings.noGoZone.height) || 0, 0, SCENE_HEIGHT - state.settings.noGoZone.y);
   renderZone(); if (persist) scheduleSettingsSave();
 }
-function scheduleSettingsSave() { clearTimeout(state.settingsSaveTimer); state.settingsSaveTimer = setTimeout(() => { state.socket?.emit('admin:settings:update', { noGoZone: state.settings.noGoZone, animation: state.settings.animation, towerAnimation: state.settings.towerAnimation, rewardMapping: state.settings.rewardMapping, customizationRewardMode: state.settings.customizationRewardMode }); }, 180); }
+function settingsSavePayload(rewardMapping = state.settings.rewardMapping, customizationRewardMode = state.settings.customizationRewardMode) {
+  return { noGoZone: state.settings.noGoZone, animation: state.settings.animation, towerAnimation: state.settings.towerAnimation, rewardMapping, customizationRewardMode };
+}
+function scheduleSettingsSave() { clearTimeout(state.settingsSaveTimer); state.settingsSaveTimer = setTimeout(() => { state.socket?.emit('admin:settings:update', settingsSavePayload()); }, 180); }
 function pumpkinDimensions(pumpkin) {
   const rawStage = Number(pumpkin?.stage);
   const stage = Number.isFinite(rawStage) ? clamp(Math.round(rawStage), 1, 4) : 1;
@@ -506,9 +509,29 @@ function readRewardMapping() { return Object.fromEntries(REWARD_ACTIONS.map((act
 function saveRewardMapping() {
   const mapping = readRewardMapping(); const ids = Object.values(mapping).filter(Boolean);
   if (new Set(ids).size !== ids.length) { $('#reward-mapping-state').textContent = 'Duplicate reward assignment: each Twitch reward can be assigned to only one action.'; return; }
-  state.settings.rewardMapping = { ...DEFAULT_REWARD_MAPPING, ...mapping };
-  state.settings.customizationRewardMode = $('#customization-reward-mode').value;
-  $('#reward-mapping-state').textContent = 'Saving reward settings…'; scheduleSettingsSave();
+  const customizationRewardMode = $('#customization-reward-mode').value;
+  if (!state.socket?.connected) {
+    $('#reward-mapping-state').textContent = 'Unable to save reward settings while disconnected.';
+    renderRewardMapping();
+    return;
+  }
+  clearTimeout(state.settingsSaveTimer);
+  $('#reward-mapping-state').textContent = 'Saving reward settings…';
+  state.socket.emit('admin:settings:update', settingsSavePayload(mapping, customizationRewardMode), (result = {}) => {
+    if (!result.ok) {
+      $('#reward-mapping-state').textContent = `Unable to save reward settings: ${result.error || 'server did not confirm the update'}`;
+      renderRewardMapping();
+      return;
+    }
+    state.settings = {
+      ...state.settings,
+      ...(result.settings || {}),
+      rewardMapping: { ...DEFAULT_REWARD_MAPPING, ...(result.settings?.rewardMapping || mapping) },
+      customizationRewardMode: result.settings?.customizationRewardMode || customizationRewardMode,
+    };
+    renderRewardMapping();
+    $('#reward-mapping-state').textContent = 'Reward settings saved.';
+  });
 }
 async function testPumpkinTower() {
   const button = $('#test-pumpkin-tower'); const status = $('#test-reward-state');

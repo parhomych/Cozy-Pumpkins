@@ -607,6 +607,7 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   attachSocketHandlers(io, { config, db, statuses: { all: () => [] }, movementScheduler: { settingsUpdated: () => schedulerCalls.push('updated') } });
   const socket = { data: { admin: true }, handshake: { headers: {} }, on(event, handler) { socketEvents.set(event, handler); }, emit(...args) { ioEvents.push(['socket', ...args]); } };
   connection(socket);
+  const acknowledgements = [];
    socketEvents.get('admin:settings:update')({ animation: { eyeFrequency: 2.5 } });
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
    assert.deepEqual(ioEvents.at(-1)[1].settings.animation, { eyeFrequency: 2.5, mouthFrequency: 3 });
@@ -644,12 +645,21 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
   assert.equal(ioEvents.at(-1)[1].settings.rewardMapping.inflate, 'reward-inflate');
   assert.equal(db.getSettings(config).rewardMapping.inflate, 'reward-inflate');
-  socketEvents.get('admin:settings:update')({ rewardMapping: { pumpkin_customization: 'appearance-reward' }, customizationRewardMode: 'all' });
+  socketEvents.get('admin:settings:update')({ rewardMapping: { pumpkin_customization: 'appearance-reward' }, customizationRewardMode: 'all' }, (result) => acknowledgements.push(result));
   assert.equal(ioEvents.at(-1)[1].settings.rewardMapping.pumpkin_customization, 'appearance-reward');
   assert.equal(ioEvents.at(-1)[1].settings.customizationRewardMode, 'all');
   assert.equal(db.getSettings(config).customizationRewardMode, 'all');
-  socketEvents.get('admin:settings:update')({ customizationRewardMode: 'multiple' });
+  assert.equal(acknowledgements.at(-1).ok, true);
+  assert.equal(acknowledgements.at(-1).settings.rewardMapping.pumpkin_customization, 'appearance-reward');
+  socketEvents.get('admin:settings:update')({ customizationRewardMode: 'multiple' }, (result) => acknowledgements.push(result));
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_customization_reward_mode' }]);
+  assert.deepEqual(acknowledgements.at(-1), { ok: false, error: 'invalid_customization_reward_mode' });
+  const reconnectedEvents = [];
+  const reconnectedSocket = { data: { admin: true }, handshake: { headers: {} }, on() {}, emit(...args) { reconnectedEvents.push(args); } };
+  connection(reconnectedSocket);
+  const scene = reconnectedEvents.find(([event]) => event === 'scene:init')?.[1];
+  assert.equal(scene.settings.rewardMapping.pumpkin_customization, 'appearance-reward');
+  assert.equal(scene.settings.customizationRewardMode, 'all');
   const growthThresholds = { stage2: 400, stage3: 1300, stage4: 3500 };
   socketEvents.get('admin:settings:update')({ growthThresholds });
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
@@ -743,14 +753,16 @@ test('reward IDs are required and repeat redemptions are ignored', () => {
   db.close();
 });
 
-test('redemptions match exact reward IDs and resolve the Twitch user ID before login', () => {
+test('redemptions prefer Twitch user IDs, use username-only links, and reject conflicting user IDs', () => {
   const config = testConfig({ TWITCH_REWARD_INFLATE_ID: 'reward-inflate' });
   const db = testDatabase(config);
   const donations = new DonationService({ db, config, idFactory: (() => { let id = 0; return () => `pumpkin-${++id}`; })() });
   donations.handle({ id: 'donation-1', userId: 'twitch-1', username: 'viewer-one', name: 'Viewer One', amount: 100, currency: 'RUB', message: '!тыковка' });
   donations.handle({ id: 'donation-2', userId: 'twitch-2', username: 'viewer-two', name: 'Viewer Two', amount: 100, currency: 'RUB', message: '!тыковка' });
+  donations.handle({ id: 'donation-3', userId: 'twitch-3', username: 'viewer-three', name: 'Viewer Three', amount: 100, currency: 'RUB', message: '!тыковка' });
   db.updatePumpkin('pumpkin-1', { twitchUserId: 'twitch-1', twitchUsername: 'viewer-one' });
   db.updatePumpkin('pumpkin-2', { twitchUserId: 'twitch-2', twitchUsername: 'viewer-two' });
+  db.updatePumpkin('pumpkin-3', { twitchUsername: 'viewer-three' });
   const events = [];
   const service = new RewardService({ db, config, emit: (event, payload) => events.push([event, payload]) });
 
@@ -761,10 +773,37 @@ test('redemptions match exact reward IDs and resolve the Twitch user ID before l
 
   const positions = db.listPumpkins().map(({ id, x, y }) => ({ id, x, y }));
   assert.equal(service.handle({ id: 'redemption-unlinked', rewardId: 'reward-inflate', userId: 'unknown-user', userLogin: 'unknown-user' }).status, 'no_pumpkin_for_user');
+  assert.equal(service.handle({ id: 'redemption-username-only', rewardId: 'reward-inflate', userId: 'twitch-3', userLogin: 'viewer-three' }).pumpkin.id, 'pumpkin-3');
+  assert.equal(db.getPumpkin('pumpkin-3').twitchUserId, 'twitch-3');
   assert.equal(service.handle({ id: 'redemption-id-mismatch', rewardId: 'reward-inflate', userId: 'unmapped-id', userLogin: 'viewer-one' }).status, 'no_pumpkin_for_user');
   assert.deepEqual(db.listPumpkins().map(({ id, x, y }) => ({ id, x, y })), positions);
   assert.equal(service.handle({ id: 'redemption-wrong-id', rewardId: 'same-title-different-id', userId: 'twitch-1', userLogin: 'viewer-one' }).status, 'ignored_reward');
   assert.deepEqual(db.listPumpkins().map(({ id, x, y }) => ({ id, x, y })), positions);
+  db.close();
+});
+
+test('redemptions do not auto-link when multiple pumpkins have the same display name', () => {
+  const config = testConfig({ TWITCH_REWARD_INFLATE_ID: 'reward-inflate' });
+  const db = testDatabase(config);
+  const first = insertMovementTestPumpkin(db, 'ambiguous-name-first', 400, config.scene.groundY);
+  const second = insertMovementTestPumpkin(db, 'ambiguous-name-second', 700, config.scene.groundY);
+  db.updatePumpkin(first.id, { displayName: 'dark_neri' });
+  db.updatePumpkin(second.id, { displayName: 'DARK_NERI' });
+  db.updateSettings({ rewardMapping: { inflate: 'reward-inflate' } }, config);
+  const service = new RewardService({ db, config });
+
+  const result = service.handle({
+    id: 'ambiguous-display-name-redemption',
+    rewardId: 'reward-inflate',
+    userId: 'twitch-dark-neri',
+    userLogin: 'dark_neri',
+  });
+
+  assert.equal(result.status, 'no_pumpkin_for_user');
+  assert.equal(db.getPumpkin(first.id).twitchUserId, null);
+  assert.equal(db.getPumpkin(first.id).twitchUsername, null);
+  assert.equal(db.getPumpkin(second.id).twitchUserId, null);
+  assert.equal(db.getPumpkin(second.id).twitchUsername, null);
   db.close();
 });
 

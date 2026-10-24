@@ -1,5 +1,5 @@
-import { PumpkinCharacter } from './pumpkin-character.js?v=witch-assistant-20261025';
-import { WitchAssistant } from './witch-assistant.js?v=witch-assistant-20261025';
+import { PumpkinCharacter } from './pumpkin-character.js?v=twitch-customization-20261025';
+import { WitchAssistant } from './witch-assistant.js?v=twitch-customization-20261025';
 
 const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
 const DEFAULT_PUMPKIN_NAME_FONT_SIZE = 14;

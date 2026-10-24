@@ -1,5 +1,5 @@
-import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=cocoa-hands-bend-20261024';
-import { COCOA_HANDS_PATHS_REST, getBentCocoaPaths } from './cocoa-hands-paths.js?v=cocoa-hands-bend-20261024';
+import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=twitch-customization-20261025';
+import { COCOA_HANDS_PATHS_REST, getBentCocoaPaths } from './cocoa-hands-paths.js?v=twitch-customization-20261025';
 
 const getGsap = () => globalThis.gsap || globalThis.window?.gsap || null;
 const wait = (fn, ms) => setTimeout(fn, ms);

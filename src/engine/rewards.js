@@ -45,7 +45,7 @@ function mappedAction(rewardId, mapping) { for (const [action, id] of Object.ent
 export class RewardService {
   constructor({ db, config, logger = console, emit = () => {}, random = Math.random } = {}) { Object.assign(this, { db, config, logger, emit, random }); }
   handle(raw) {
-    const event = parseRedemption(raw); const now = new Date().toISOString(); let result;
+    const event = parseRedemption(raw); const now = new Date().toISOString(); let result; let autoLinkedPumpkinId = null;
     this.db.transaction(() => {
       const settings = this.db.getSettings(this.config);
       const action = mappedAction(event.rewardId, settings.rewardMapping);
@@ -58,11 +58,28 @@ export class RewardService {
         result = { duplicate: false, redemptionId: event.redemptionId, status: 'ignored_reward' };
         return;
       }
+      let pumpkin = this.db.findPumpkinByTwitch(event.userId, event.userLogin);
+      if (pumpkin && event.userId && !pumpkin.twitchUserId) {
+        pumpkin = this.db.updatePumpkin(pumpkin.id, {
+          twitchUserId: event.userId,
+          twitchUsername: event.userLogin || pumpkin.twitchUsername,
+        });
+        autoLinkedPumpkinId = pumpkin.id;
+      }
+      if (!pumpkin && event.userLogin) {
+        const nameMatch = this.db.findUnlinkedPumpkinByDisplayName(event.userLogin, event.userId);
+        if (nameMatch) {
+          pumpkin = this.db.updatePumpkin(nameMatch.id, {
+            twitchUserId: event.userId || null,
+            twitchUsername: event.userLogin,
+          });
+          autoLinkedPumpkinId = pumpkin.id;
+        }
+      }
       if (action === 'pumpkin_tower') {
         result = this._runPumpkinTower(settings, { redemptionId: event.redemptionId });
         return;
       }
-      const pumpkin = this.db.findPumpkinByTwitch(event.userId, event.userLogin);
       if (!pumpkin) {
         result = { duplicate: false, redemptionId: event.redemptionId, status: 'no_pumpkin_for_user', action };
         return;
@@ -94,17 +111,23 @@ export class RewardService {
       const context = { scene: this.config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
       result = this.applyAction(action, pumpkin, event.input, context);
     });
-    if (result.duplicate || result.status === 'no_pumpkin_for_user' || result.status === 'ignored_reward' || result.status === 'ignored_input_too_long' || result.status === 'ignored_unrecognized_customization' || result.status === 'no_safe_tower_layout' || result.status === 'no_pumpkins') return result;
+    if (result.duplicate) return result;
+    if (autoLinkedPumpkinId) {
+      this.emit('pumpkin:updated', { pumpkin: publicPumpkin(this.db.getPumpkin(autoLinkedPumpkinId)) });
+    }
+    if (result.status === 'no_pumpkin_for_user' || result.status === 'ignored_reward' || result.status === 'ignored_input_too_long' || result.status === 'ignored_unrecognized_customization' || result.status === 'no_safe_tower_layout' || result.status === 'no_pumpkins') return result;
     if (result.action === 'pumpkin_customization') {
-      this.emit('pumpkin:updated', { pumpkin: result.pumpkin });
+      if (result.pumpkin.id !== autoLinkedPumpkinId) this.emit('pumpkin:updated', { pumpkin: result.pumpkin });
       return result;
     }
     if (result.global) {
       this.emit('pumpkin:action', { id: null, action: result.action, ...result.payload });
       return result;
     }
-    for (const pumpkin of result.updatedPumpkins || []) this.emit('pumpkin:updated', { pumpkin });
-    if (result.pumpkin) this.emit('pumpkin:updated', { pumpkin: result.pumpkin });
+    for (const pumpkin of result.updatedPumpkins || []) {
+      if (pumpkin.id !== autoLinkedPumpkinId) this.emit('pumpkin:updated', { pumpkin });
+    }
+    if (result.pumpkin && result.pumpkin.id !== autoLinkedPumpkinId) this.emit('pumpkin:updated', { pumpkin: result.pumpkin });
     this.emit('pumpkin:action', { id: result.pumpkin?.id || null, action: result.action, ...result.payload });
     return result;
   }

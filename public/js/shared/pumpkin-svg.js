@@ -12,7 +12,7 @@ import {
   COCOA_HANDS_PATHS,
   COCOA_HANDS_STAGE_CONFIG,
   COCOA_HANDS_WIDTHS,
-} from './cocoa-hands-paths.js?v=cocoa-hands-bend-20261024';
+} from './cocoa-hands-paths.js?v=twitch-customization-20261025';
 
 export { COCOA_HANDS_STAGE_CONFIG, COCOA_HANDS_WIDTHS };
 

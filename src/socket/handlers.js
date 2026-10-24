@@ -13,7 +13,7 @@ import { roamingSettingsPatch } from '../engine/roaming-settings.js';
 
 function publicSettings(settings) { return { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, customizationRewardMode: settings.customizationRewardMode, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers, roamingIntervalSeconds: settings.roamingIntervalSeconds, roamingSpeed: settings.roamingSpeed, roamingJumpHeight: settings.roamingJumpHeight, roamingMinDistance: settings.roamingMinDistance, roamingMaxDistance: settings.roamingMaxDistance }; }
 function safeScene(db, config, statuses) { const settings = db.getSettings(config); return { pumpkins: db.listPumpkins().map(publicPumpkin), settings: publicSettings(settings), authStatus: statuses.all() }; }
-function adminOnly(socket, handler) { return (...args) => { if (!socket.data.admin) { socket.emit('operation:error', { operation: args[0]?.operation || 'admin', message: 'admin_session_required' }); return; } return handler(...args); }; }
+function adminOnly(socket, handler) { return (...args) => { if (!socket.data.admin) { socket.emit('operation:error', { operation: args[0]?.operation || 'admin', message: 'admin_session_required' }); if (typeof args[1] === 'function') args[1]({ ok: false, error: 'admin_session_required' }); return; } return handler(...args); }; }
 export function attachSocketHandlers(io, { config, db, statuses, logger = console, onBroadcast = () => {}, movementScheduler = null } = {}) {
   io.use((socket, next) => { socket.data.admin = socketHasAdminSession(socket.handshake.headers.cookie, config.sessionSecret); next(); });
   io.on('connection', (socket) => {
@@ -39,7 +39,7 @@ export function attachSocketHandlers(io, { config, db, statuses, logger = consol
     }));
     socket.on('admin:pumpkin:delete', adminOnly(socket, ({ id } = {}) => { if (db.deletePumpkin(id)) { movementScheduler?.remove(id); io.emit('pumpkin:deleted', { id }); } }));
     socket.on('admin:pumpkins:clear', adminOnly(socket, (payload = {}) => { if (payload.confirmation === true) { db.clearPumpkins(); movementScheduler?.reset(); io.emit('pumpkin:cleared', {}); } }));
-     const updateSettings = adminOnly(socket, (payload = {}) => {
+     const updateSettings = adminOnly(socket, (payload = {}, acknowledge) => {
        try {
          const current = db.getSettings(config); const patch = {};
          Object.assign(patch, roamingSettingsPatch(payload, current));
@@ -91,7 +91,8 @@ export function attachSocketHandlers(io, { config, db, statuses, logger = consol
          for (const pumpkin of relocated) io.emit('pumpkin:updated', { pumpkin });
          io.emit('settings:updated', { settings: publicSettings(settings) });
          if (patch.noGoZone) io.emit('settings:nogo-updated', { noGoZone: settings.noGoZone });
-          } catch (error) { socket.emit('operation:error', { operation: payload.showPumpkinNames !== undefined || payload.pumpkinNameFontSize !== undefined || payload.rewardMapping !== undefined || payload.customizationRewardMode !== undefined || payload.growthThresholds !== undefined || payload.growthStages !== undefined || payload.growthMultipliers !== undefined || payload.animation !== undefined || payload.towerAnimation !== undefined || payload.eyeFrequency !== undefined || payload.mouthFrequency !== undefined || payload.minSpawnDonation !== undefined || payload.spawnCommand !== undefined || payload.roamingIntervalSeconds !== undefined || payload.roamingSpeed !== undefined || payload.roamingJumpHeight !== undefined || payload.roamingMinDistance !== undefined || payload.roamingMaxDistance !== undefined ? 'settings-update' : 'nogo-update', message: error.message }); }
+         acknowledge?.({ ok: true, settings: publicSettings(settings) });
+          } catch (error) { socket.emit('operation:error', { operation: payload.showPumpkinNames !== undefined || payload.pumpkinNameFontSize !== undefined || payload.rewardMapping !== undefined || payload.customizationRewardMode !== undefined || payload.growthThresholds !== undefined || payload.growthStages !== undefined || payload.growthMultipliers !== undefined || payload.animation !== undefined || payload.towerAnimation !== undefined || payload.eyeFrequency !== undefined || payload.mouthFrequency !== undefined || payload.minSpawnDonation !== undefined || payload.spawnCommand !== undefined || payload.roamingIntervalSeconds !== undefined || payload.roamingSpeed !== undefined || payload.roamingJumpHeight !== undefined || payload.roamingMinDistance !== undefined || payload.roamingMaxDistance !== undefined ? 'settings-update' : 'nogo-update', message: error.message }); acknowledge?.({ ok: false, error: error.message }); }
      });
      socket.on('admin:settings:update', updateSettings);
      socket.on('admin:settings:nogo-update', updateSettings);

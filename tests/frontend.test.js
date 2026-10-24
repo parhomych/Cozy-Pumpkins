@@ -310,8 +310,29 @@ test('renderer hops only for explicit roaming moves and starts physics after an 
 test('admin preview and overlay both use the shared pumpkin renderer', async () => {
   const admin = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
   const overlay = await readFile(new URL('../public/js/overlay-app.js', import.meta.url), 'utf8');
+  const overlayHtml = await readFile(new URL('../public/overlay.html', import.meta.url), 'utf8');
+  const renderer = await readFile(new URL('../public/js/shared/pumpkin-renderer.js', import.meta.url), 'utf8');
+  const character = await readFile(new URL('../public/js/shared/pumpkin-character.js', import.meta.url), 'utf8');
+  const artwork = await readFile(new URL('../public/js/shared/pumpkin-svg.js', import.meta.url), 'utf8');
   assert.match(admin, /import \{ PumpkinRenderer \} from '\.\/shared\/pumpkin-renderer\.js/);
   assert.match(overlay, /import \{ PumpkinRenderer \} from '\.\/shared\/pumpkin-renderer\.js/);
+  assert.match(overlay, /socket\.on\('pumpkin:updated', \(\{ pumpkin \}\) => renderer\.update\(pumpkin\)\)/);
+  assert.match(overlayHtml, /overlay-app\.js\?v=twitch-customization-20261025/);
+  assert.match(overlay, /pumpkin-renderer\.js\?v=twitch-customization-20261025/);
+  assert.match(renderer, /pumpkin-character\.js\?v=twitch-customization-20261025/);
+  assert.match(character, /pumpkin-svg\.js\?v=twitch-customization-20261025/);
+  assert.match(artwork, /WITCH_HAT_URL/);
+});
+
+test('explicit reward settings save bypasses debounce and waits for server acknowledgement', async () => {
+  const admin = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
+  const save = admin.slice(admin.indexOf('function saveRewardMapping()'), admin.indexOf('\nasync function testPumpkinTower()'));
+  assert.match(save, /if \(!state\.socket\?\.connected\)/);
+  assert.match(save, /clearTimeout\(state\.settingsSaveTimer\)/);
+  assert.match(save, /state\.socket\.emit\('admin:settings:update', settingsSavePayload\(mapping, customizationRewardMode\), \(result = \{\}\) =>/);
+  assert.match(save, /Unable to save reward settings/);
+  assert.match(save, /Reward settings saved\./);
+  assert.doesNotMatch(save, /scheduleSettingsSave\(\)/);
 });
 
 test('shared pumpkin artwork exposes independent reference layers and face parts', async () => {
@@ -378,8 +399,8 @@ test('admin interaction uses the transformed artwork hitbox instead of the shift
   assert.match(svgSource, /mover\.append\(floater, interactionHitbox\)/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \{[\s\S]*pointer-events: none;/);
   assert.match(cssSource, /\.scene-canvas \.pumpkin-character \.interaction-hitbox \{[\s\S]*pointer-events: all;/);
-  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=pumpkin-movement-distance-20261023"/);
-  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=pumpkin-jump-height-setting-20261023"/);
+  assert.match(adminHtml, /src="\/js\/admin-app\.js\?v=twitch-customization-20261025"/);
+  assert.match(overlayHtml, /src="\/js\/overlay-app\.js\?v=twitch-customization-20261025"/);
 });
 
 test('shared character includes smooth idle, face, stem, and cleanup animation hooks', async () => {

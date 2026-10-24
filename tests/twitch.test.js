@@ -1,9 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { TwitchEventSub } from '../src/integrations/twitch-eventsub.js';
 import { TwitchApiClient } from '../src/integrations/twitch-api.js';
 import { createApp } from '../server.js';
 import { Database } from '../src/db/database.js';
+import { RewardService } from '../src/engine/rewards.js';
 import { testConfig } from './helpers.js';
 
 class MockWebSocket {
@@ -369,7 +373,7 @@ test('server wiring applies an appearance redemption only to the mapped viewer p
       id: 'donation-owner',
       userId: 'viewer-1',
       username: 'viewer-one',
-      name: 'Viewer One',
+      name: 'Viewer-One',
       amount: 100,
       currency: 'RUB',
       message: '!тыковка',
@@ -383,7 +387,6 @@ test('server wiring applies an appearance redemption only to the mapped viewer p
       currency: 'RUB',
       message: '!тыковка',
     }).pumpkin;
-    runtime.db.updatePumpkin(viewerPumpkin.id, { twitchUserId: 'viewer-1', twitchUsername: 'viewer-one' });
     runtime.db.updatePumpkin(otherPumpkin.id, { twitchUserId: 'viewer-2', twitchUsername: 'viewer-two' });
     await runtime.twitchEventSub.start();
     const socket = MockWebSocket.instances[0];
@@ -391,6 +394,7 @@ test('server wiring applies an appearance redemption only to the mapped viewer p
       metadata: { message_type: 'session_welcome' },
       payload: { session: { id: 'session-1', keepalive_timeout_seconds: 30 } },
     });
+
     await new Promise((resolve) => setImmediate(resolve));
     const notification = {
       metadata: {
@@ -402,15 +406,17 @@ test('server wiring applies an appearance redemption only to the mapped viewer p
         user_id: 'viewer-1',
         user_login: 'viewer-one',
         reward: { id: 'reward-appearance', title: 'Pumpkin appearance' },
-        user_input: 'sleepy eyes',
+        user_input: '!neca_eyes',
       } },
     };
     socket.message(notification);
     await new Promise((resolve) => setImmediate(resolve));
     socket.message(notification);
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(runtime.db.getPumpkin(viewerPumpkin.id).customization.eyes, 'sleepy');
+    assert.equal(runtime.db.getPumpkin(viewerPumpkin.id).customization.eyes, 'neca_eyes');
     assert.equal(runtime.db.getPumpkin(viewerPumpkin.id).customization.mouth, viewerPumpkin.customization.mouth);
+    assert.equal(runtime.db.getPumpkin(viewerPumpkin.id).twitchUserId, 'viewer-1');
+    assert.equal(runtime.db.getPumpkin(viewerPumpkin.id).twitchUsername, 'viewer-one');
     assert.deepEqual(runtime.db.getPumpkin(otherPumpkin.id).customization, otherPumpkin.customization);
     assert.equal(events.filter(([event]) => event === 'pumpkin:updated').length, 1);
     assert.equal(events.find(([event]) => event === 'pumpkin:updated')[1].pumpkin.id, viewerPumpkin.id);
@@ -418,5 +424,54 @@ test('server wiring applies an appearance redemption only to the mapped viewer p
   } finally {
     await runtime.twitchEventSub.stop();
     runtime.db.close();
+  }
+});
+
+test('Twitch appearance redemption survives closing and reopening the application database', () => {
+  const config = testConfig();
+  const directory = mkdtempSync(path.join(tmpdir(), 'cozy-pumpkin-twitch-appearance-'));
+  const databasePath = path.join(directory, 'scene.sqlite');
+  try {
+    const db = new Database(databasePath);
+    db.updateSettings({
+      rewardMapping: { pumpkin_customization: 'appearance-reward' },
+      customizationRewardMode: 'single',
+    }, config);
+    const timestamp = new Date().toISOString();
+    db.insertPumpkin({
+      id: 'persisted-viewer-pumpkin',
+      ownerKey: 'persisted-viewer',
+      ownerNormalized: 'persisted-viewer',
+      displayName: 'Persisted Viewer',
+      totalDonated: 0,
+      currency: 'RUB',
+      stage: 1,
+      x: 500,
+      y: config.scene.groundY,
+      isAirborne: false,
+      parentId: null,
+      stackOffsetY: null,
+      customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'none', prop: 'none' },
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    });
+    db.updatePumpkin('persisted-viewer-pumpkin', { twitchUserId: 'persisted-viewer' });
+    const service = new RewardService({ db, config });
+    const result = service.handle({
+      id: 'persisted-appearance-redemption',
+      rewardId: 'appearance-reward',
+      userId: 'persisted-viewer',
+      userLogin: 'persisted-viewer',
+      input: 'ghost skin',
+    });
+    assert.equal(result.status, 'customization_applied');
+    db.close();
+
+    const reopened = new Database(databasePath);
+    assert.equal(reopened.getSettings(config).rewardMapping.pumpkin_customization, 'appearance-reward');
+    assert.equal(reopened.getPumpkin('persisted-viewer-pumpkin').customization.skin, 'ghost');
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

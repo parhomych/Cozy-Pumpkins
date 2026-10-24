@@ -159,12 +159,24 @@ export class Database {
   getPumpkin(id) { return rowToPumpkin(this.sqlite.prepare('SELECT * FROM pumpkins WHERE id = ?').get(id)); }
   findPumpkinByOwner(ownerKey) { return rowToPumpkin(this.sqlite.prepare('SELECT * FROM pumpkins WHERE owner_key = ?').get(ownerKey)); }
   findPumpkinByTwitch(userId, login) {
-    const matches = userId
+    const idMatches = userId
       ? this.sqlite.prepare('SELECT * FROM pumpkins WHERE twitch_user_id = ?').all(userId)
-      : login
-        ? this.sqlite.prepare('SELECT * FROM pumpkins WHERE twitch_username = ? COLLATE NOCASE').all(login)
-        : [];
+      : [];
+    if (idMatches.length > 0) return idMatches.length === 1 ? rowToPumpkin(idMatches[0]) : null;
+    const matches = login
+      ? userId
+        ? this.sqlite.prepare('SELECT * FROM pumpkins WHERE twitch_username = ? COLLATE NOCASE AND (twitch_user_id IS NULL OR twitch_user_id = ?)').all(login, userId)
+        : this.sqlite.prepare('SELECT * FROM pumpkins WHERE twitch_username = ? COLLATE NOCASE').all(login)
+      : [];
     return matches.length === 1 ? rowToPumpkin(matches[0]) : null;
+  }
+  findUnlinkedPumpkinByDisplayName(name, userId) {
+    if (!name) return null;
+    const linked = this.sqlite.prepare('SELECT COUNT(*) AS count FROM pumpkins WHERE twitch_username = ? COLLATE NOCASE OR (? IS NOT NULL AND twitch_user_id = ?)').get(name, userId || null, userId || null);
+    if (linked.count > 0) return null;
+    const matches = this.sqlite.prepare('SELECT * FROM pumpkins WHERE display_name = ? COLLATE NOCASE').all(name);
+    if (matches.length !== 1 || matches[0].twitch_user_id || matches[0].twitch_username) return null;
+    return rowToPumpkin(matches[0]);
   }
   insertPumpkin(pumpkin) {
     this.sqlite.prepare(`INSERT INTO pumpkins (id, owner_key, owner_normalized, display_name, show_display_name, twitch_user_id, twitch_username, total_donated, currency, stage, x, y, is_airborne, parent_id, stack_offset_y, customization_json, created_at, updated_at) VALUES (@id, @ownerKey, @ownerNormalized, @displayName, @showDisplayName, @twitchUserId, @twitchUsername, @totalDonated, @currency, @stage, @x, @y, @isAirborne, @parentId, @stackOffsetY, @customization, @createdAt, @updatedAt)`).run({ ...pumpkin, showDisplayName: pumpkin.showDisplayName === false ? 0 : 1, twitchUserId: pumpkin.twitchUserId || null, twitchUsername: pumpkin.twitchUsername || null, isAirborne: pumpkin.isAirborne ? 1 : 0, customization: JSON.stringify(pumpkin.customization) });
