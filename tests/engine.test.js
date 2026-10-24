@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DonationService } from '../src/engine/donations.js';
 import { RewardService } from '../src/engine/rewards.js';
-import { customizationCatalog, customizationValues, parseCustomization, sanitizeCustomization } from '../src/engine/customization-parser.js';
+import { customizationCatalog, customizationValues, parseCustomization, parseCustomizationRequest, sanitizeCustomization } from '../src/engine/customization-parser.js';
 import { clampPosition, dimensionsFor, isPositionValid } from '../src/engine/spatial-rules.js';
 import { testConfig, testDatabase } from './helpers.js';
 import { Database } from '../src/db/database.js';
@@ -53,13 +53,13 @@ function insertMovementTestPumpkin(db, id, x, y, stage = 1) {
 test('customization parser accepts the documented command and ignores unknown words', () => {
   const parsed = parseCustomization('  !ТЫКОВКА ведьма рожки хитрые клыки метла неизвестно');
   assert.equal(parsed.commandDetected, true);
-  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'sly', mouth: 'fangs', hat: 'leaf', prop: 'none' });
+  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'sly', mouth: 'fangs', hat: 'none', prop: 'none' });
 });
 
 test('customization parser recognizes the configured command prefix only', () => {
   const parsed = parseCustomization('  !Pumpkin witch stars метла extra', undefined, '!pumpkin');
   assert.equal(parsed.commandDetected, true);
-  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'stars', mouth: 'cat', hat: 'leaf', prop: 'none' });
+  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'stars', mouth: 'cat', hat: 'none', prop: 'none' });
   assert.equal(parseCustomization('!pumpkinExtra witch', undefined, '!pumpkin').commandDetected, false);
   assert.equal(parseCustomization('!тыковка witch', undefined, '!pumpkin').commandDetected, false);
 });
@@ -69,10 +69,16 @@ test('customization catalog exposes canonical values and aliases for supported s
   assert.deepEqual(catalog.map(({ slot }) => slot), ['skin', 'eyes', 'mouth', 'hat', 'prop']);
   for (const group of catalog) {
     assert.deepEqual(group.values.map(({ value }) => value), customizationValues()[group.slot]);
-    assert.ok(group.values.every(({ value, keywords }) => keywords.includes(value)));
+    assert.ok(group.values.every(({ value, keywords }) => keywords.includes(value) || (group.slot === 'hat' && value === 'witch' && keywords.includes('witch hat'))));
   }
-  assert.deepEqual(catalog.find(({ slot }) => slot === 'hat').values, []);
+  assert.deepEqual(catalog.find(({ slot }) => slot === 'hat').values, [
+    { value: 'witch', keywords: ['witch hat', 'witch_hat', 'шляпа ведьмы', 'ведьминская шляпа'] },
+  ]);
   assert.deepEqual(catalog.find(({ slot }) => slot === 'prop').values, [
+    {
+      value: 'none',
+      keywords: ['none', 'нет', 'ничего', 'без аксессуара'],
+    },
     {
       value: 'cocoa_hands',
       keywords: ['cocoa_hands', 'cocoa hands', 'cocoa', 'какао', 'руки с какао'],
@@ -82,6 +88,18 @@ test('customization catalog exposes canonical values and aliases for supported s
       keywords: ['blanket', 'plaid', 'плед', 'пледик', 'одеяло', 'одеялко'],
     },
   ]);
+});
+
+test('plain customization requests preserve text order, prefer long aliases, and reject oversized input', () => {
+  assert.deepEqual(parseCustomizationRequest('please use witch hat, sleepy eyes, fangs, then stars'), [
+    { slot: 'hat', value: 'witch' },
+    { slot: 'eyes', value: 'sleepy' },
+    { slot: 'mouth', value: 'fangs' },
+    { slot: 'eyes', value: 'stars' },
+  ]);
+  assert.deepEqual(parseCustomizationRequest('witch'), [{ slot: 'skin', value: 'witch' }]);
+  assert.deepEqual(parseCustomizationRequest(`${'x'.repeat(257)} ghost`), []);
+  assert.deepEqual(parseCustomizationRequest(`ghost${' '.repeat(252)}`), []);
 });
 
 test('donation customization recognizes cocoa-hands aliases and sanitation preserves supported choices', () => {
@@ -106,6 +124,18 @@ test('donation customization recognizes blanket aliases and sanitation preserves
   assert.deepEqual(
     sanitizeCustomization({ prop: 'blanket' }, { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'none' }),
     { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'blanket' },
+  );
+});
+
+test('donation customization recognizes none prop aliases and sanitation resets supported choices', () => {
+  for (const alias of ['none', 'нет', 'ничего', 'без аксессуара']) {
+    const parsed = parseCustomization(`!тыковка ${alias}`);
+    assert.equal(parsed.recognized, true, `${alias} should be recognized`);
+    assert.equal(parsed.customization.prop, 'none');
+  }
+  assert.deepEqual(
+    sanitizeCustomization({ prop: 'none' }, { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'cocoa_hands' }),
+    { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'none' },
   );
 });
 
@@ -326,7 +356,7 @@ test('donation spawn gates and provider identities preserve legacy owners and de
   const created = service.handle({ ...donor, id: 'shared-event-id', amount: 100, message: '  !SPAWN witch рожки' });
   assert.equal(created.spawned, true);
   assert.equal(created.pumpkin.customization.skin, 'witch');
-  assert.equal(created.pumpkin.customization.hat, 'leaf');
+  assert.equal(created.pumpkin.customization.hat, 'none');
   assert.equal(service.handle({ ...donor, id: 'shared-event-id', amount: 100, message: '!spawn ghost' }).duplicate, true);
   const existingOwner = service.handle({ ...donor, id: 'existing-owner', amount: 25, message: '' });
   assert.equal(existingOwner.spawned, false);
@@ -408,7 +438,7 @@ test('donation spawn randomly overlaps existing pumpkins instead of requiring a 
     isAirborne: false,
     parentId: null,
     stackOffsetY: null,
-    customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' },
+    customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'none', prop: 'none' },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }));
@@ -452,7 +482,7 @@ test('random donation spawn shifts 30 pixels when it would fully cover a pumpkin
     isAirborne: false,
     parentId: null,
     stackOffsetY: null,
-    customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' },
+    customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'none', prop: 'none' },
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   });
@@ -614,6 +644,12 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
   assert.equal(ioEvents.at(-1)[1].settings.rewardMapping.inflate, 'reward-inflate');
   assert.equal(db.getSettings(config).rewardMapping.inflate, 'reward-inflate');
+  socketEvents.get('admin:settings:update')({ rewardMapping: { pumpkin_customization: 'appearance-reward' }, customizationRewardMode: 'all' });
+  assert.equal(ioEvents.at(-1)[1].settings.rewardMapping.pumpkin_customization, 'appearance-reward');
+  assert.equal(ioEvents.at(-1)[1].settings.customizationRewardMode, 'all');
+  assert.equal(db.getSettings(config).customizationRewardMode, 'all');
+  socketEvents.get('admin:settings:update')({ customizationRewardMode: 'multiple' });
+  assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_customization_reward_mode' }]);
   const growthThresholds = { stage2: 400, stage3: 1300, stage4: 3500 };
   socketEvents.get('admin:settings:update')({ growthThresholds });
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
@@ -901,6 +937,82 @@ test('reward mappings persist after reopening the SQLite database', () => {
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('customization reward applies the first recognized change and preserves other slots', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  db.insertPumpkin({
+    id: 'customization-single',
+    ownerKey: 'single',
+    ownerNormalized: 'single',
+    displayName: 'Single Viewer',
+    totalDonated: 0,
+    currency: 'RUB',
+    stage: 1,
+    x: 500,
+    y: config.scene.groundY,
+    isAirborne: false,
+    parentId: null,
+    stackOffsetY: null,
+    customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'none', prop: 'cocoa_hands' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  db.updatePumpkin('customization-single', { twitchUserId: 'viewer-single' });
+  db.updateSettings({ customizationRewardMode: 'single', rewardMapping: { pumpkin_customization: 'appearance' } }, config);
+  const events = [];
+  const rewards = new RewardService({ db, config, emit: (event, payload) => events.push([event, payload]) });
+
+  const result = rewards.handle({
+    id: 'single-change',
+    rewardId: 'appearance',
+    userId: 'viewer-single',
+    userLogin: 'viewer-single',
+    input: 'stars eyes, witch hat',
+  });
+
+  assert.equal(result.status, 'customization_applied');
+  assert.deepEqual(result.pumpkin.customization, { skin: 'classic', eyes: 'stars', mouth: 'cat', hat: 'none', prop: 'cocoa_hands' });
+  assert.equal(events.filter(([event]) => event === 'pumpkin:updated').length, 1);
+  db.close();
+});
+
+test('customization reward all mode applies every recognized change and keeps the last value per slot', () => {
+  const config = testConfig();
+  const db = testDatabase(config);
+  db.insertPumpkin({
+    id: 'customization-all',
+    ownerKey: 'all',
+    ownerNormalized: 'all',
+    displayName: 'All Viewer',
+    totalDonated: 0,
+    currency: 'RUB',
+    stage: 1,
+    x: 500,
+    y: config.scene.groundY,
+    isAirborne: false,
+    parentId: null,
+    stackOffsetY: null,
+    customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'none', prop: 'cocoa_hands' },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  db.updatePumpkin('customization-all', { twitchUserId: 'viewer-all' });
+  db.updateSettings({ customizationRewardMode: 'all', rewardMapping: { pumpkin_customization: 'appearance' } }, config);
+  const rewards = new RewardService({ db, config });
+
+  const result = rewards.handle({
+    id: 'all-changes',
+    rewardId: 'appearance',
+    userId: 'viewer-all',
+    userLogin: 'viewer-all',
+    input: 'stars eyes, sleepy eyes, ghost skin, witch hat, fangs',
+  });
+
+  assert.equal(result.status, 'customization_applied');
+  assert.deepEqual(result.pumpkin.customization, { skin: 'ghost', eyes: 'sleepy', mouth: 'fangs', hat: 'witch', prop: 'cocoa_hands' });
+  db.close();
 });
 
 test('spawn rule settings persist and broadcast through Socket.IO without accepting invalid values', () => {

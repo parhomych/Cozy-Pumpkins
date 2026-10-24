@@ -721,6 +721,9 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(html, /id="mouth-frequency"/);
   assert.match(html, /data-reward-action="inflate"/);
   assert.match(html, /data-reward-action="jump_on"/);
+  assert.match(html, /data-reward-action="pumpkin_customization"/);
+  assert.match(html, /id="customization-reward-mode"/);
+  assert.match(html, /id="customization-reward-state"/);
   assert.match(html, /id="save-reward-mapping"/);
   assert.match(html, /id="test-pumpkin-tower"/);
   assert.match(html, /id="pumpkin-name-font-size"/);
@@ -742,6 +745,9 @@ test('admin scene settings expose and save global animation frequencies', async 
   assert.match(source, /eyeFrequency/);
   assert.match(source, /mouthFrequency/);
   assert.match(source, /admin:settings:update/);
+  assert.match(source, /Needs viewer input/);
+  assert.match(source, /Unavailable\. The selected reward is missing or disabled on Twitch/);
+  assert.match(source, /customizationRewardMode/);
   assert.match(html, /id="roaming-interval-seconds"/);
   assert.match(html, /id="roaming-speed"/);
   assert.match(html, /id="roaming-jump-height"/);

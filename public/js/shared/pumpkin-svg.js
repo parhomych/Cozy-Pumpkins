@@ -6,6 +6,7 @@ const STAGE_FOUR_URL = '/assets/pumpkin-stage-4.svg';
 const COCOA_HANDS_URL = '/assets/cocoa-hands.svg';
 const BLANKET_BACK_URL = '/assets/blanket-back.svg';
 const BLANKET_FRONT_URL = '/assets/blanket-front.svg';
+const WITCH_HAT_URL = '/assets/witch/hat.png';
 
 import {
   COCOA_HANDS_PATHS,
@@ -45,7 +46,7 @@ const LEGACY_SCALE = REFERENCE_VIEWBOX / REFERENCE_DISPLAY_SIZE;
 // body decoration is still kept in the reference layer.
 const REFERENCE_STEM_ACCENT_SEGMENTS_TO_OMIT = 13;
 
-export const DEFAULT_CUSTOMIZATION = { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' };
+export const DEFAULT_CUSTOMIZATION = { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'none', prop: 'none' };
 export const CUSTOMIZATION_SLOTS = ['skin', 'eyes', 'mouth', 'hat', 'prop'];
 
 let referenceMarkupPromise;
@@ -493,20 +494,23 @@ export function createPumpkinSvg(pumpkin = {}) {
     faceAnchor.setAttribute('transform', 'translate(0 253)');
     faceAnchor.append(face);
   }
-  const hat = group('hat hat-accessory', []); hat.setAttribute('transform', `scale(${LEGACY_SCALE})`);
-  if (customization.hat === 'witch') hat.append(path('M66 88 Q110 73 154 88 L163 99 Q110 109 57 99Z', { fill: '#322548', stroke: '#24182a', 'stroke-width': '4' }), path('M77 85 L108 17 Q135 37 142 86Z', { fill: '#4a336f', stroke: '#24182a', 'stroke-width': '4' }));
-  else if (customization.hat === 'halo') hat.append(node('ellipse', { cx: '110', cy: '47', rx: '38', ry: '11', fill: 'none', stroke: '#ffe19b', 'stroke-width': '7', filter: `url(#pumpkin-glow-${pumpkin.id || 'new'})` }));
-  else if (customization.hat === 'horns') hat.append(path('M75 82 Q57 54 71 33 Q91 50 94 79 M145 82 Q163 54 149 33 Q129 50 126 79', { fill: '#bb526b', stroke: '#5c213c', 'stroke-width': '4' }));
-  else if (customization.hat === 'cat_ears') hat.append(path('M70 91 L69 43 L100 73 M150 91 L151 43 L120 73', { fill: '#d58a9e', stroke: '#5c3148', 'stroke-width': '5', 'stroke-linejoin': 'round' }));
-  else if (customization.hat === 'crown') hat.append(path('M76 86 L70 38 L94 58 L110 30 L126 58 L150 38 L144 86Z', { fill: '#f1c14d', stroke: '#7d4c29', 'stroke-width': '4' }));
+  const hat = group('hat hat-accessory', []);
+  hat.setAttribute('transform', `scale(${LEGACY_SCALE})`);
+  if (customization.hat === 'witch') {
+    hat.append(node('image', {
+      class: 'witch-hat-artwork',
+      href: WITCH_HAT_URL,
+      x: '57',
+      y: '17',
+      width: '106',
+      height: '92',
+      preserveAspectRatio: 'xMidYMid meet',
+      'aria-hidden': 'true',
+    }));
+  }
 
   const accessory = group('accessory prop-accessory', []); accessory.setAttribute('transform', `scale(${LEGACY_SCALE})`);
-  if (customization.prop === 'broom') accessory.append(path('M175 193 L205 104', { stroke: '#754c38', 'stroke-width': '6' }), path('M190 103 Q220 110 205 130 Q187 123 176 110Z', { fill: '#ba843d', stroke: '#4f352d', 'stroke-width': '4' }));
-  else if (customization.prop === 'cape') accessory.append(path('M57 153 Q25 207 63 235 Q83 213 82 182Z', { fill: '#52386f', stroke: '#2c2145', 'stroke-width': '4' }));
-  else if (customization.prop === 'lantern') accessory.append(node('path', { d: 'M41 199 h34 v34 H41Z', fill: '#e7a942', stroke: '#4f352d', 'stroke-width': '4' }));
-  else if (customization.prop === 'spider') accessory.append(node('circle', { cx: '51', cy: '196', r: '10', fill: '#24182a' }), path('M43 190 l-17 -12 M43 197 l-20 2 M43 204 l-16 13 M59 190 l17 -12 M59 197 l20 2 M59 204 l16 13', { stroke: '#24182a', 'stroke-width': '3' }));
-  else if (customization.prop === 'candle') accessory.append(node('rect', { x: '102', y: '42', width: '16', height: '33', rx: '5', fill: '#f1d49b', stroke: '#7d4c29', 'stroke-width': '3' }));
-  else if (customization.prop === 'cocoa_hands') {
+  if (customization.prop === 'cocoa_hands') {
     const config = COCOA_HANDS_STAGE_CONFIG[stage] || COCOA_HANDS_STAGE_CONFIG[3];
     const { width, height, x, y } = config;
     const container = group('cocoa-hands-container cocoa-hands-fixed-shoulders', []);

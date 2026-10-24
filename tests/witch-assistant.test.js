@@ -137,7 +137,7 @@ test('witch assistant queues mission and delays customization apply until magic 
       id: 'p1',
       x: 600,
       y: 520,
-      customization: { skin: 'classic', hat: 'leaf', prop: 'none' },
+      customization: { skin: 'classic', hat: 'none', prop: 'none' },
       applyCustomization(cust) {
         applied = true;
         this.customization = cust;
@@ -194,7 +194,7 @@ test('pumpkin renderer intercepts customization changes when witch assistant is 
       stage: 2,
       x: 500,
       y: 600,
-      customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'leaf', prop: 'none' },
+      customization: { skin: 'classic', eyes: 'cute', mouth: 'cat', hat: 'none', prop: 'none' },
     };
     renderer.add(initialPumpkin, { immediate: true });
     assert.equal(missionQueued, false, 'Initial add should not trigger witch');

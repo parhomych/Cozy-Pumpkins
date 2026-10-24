@@ -3,7 +3,8 @@
 ## Commands and layout
 
 - Use Node `22.23.3` from `.nvmrc`; install with `npm ci`, run with `npm start`, run the offline suite with `make test`, and run backend syntax checks with `npm run check`.
-- Focused checks are `node --test tests/engine.test.js` and `node --test tests/http.test.js`; frontend modules need separate `node --check public/js/**/*.js` checks because `npm run check` covers only the backend entrypoints.
+- Focused checks are `node --test tests/engine.test.js` and `node --test tests/http.test.js`; frontend modules need separate checks (`Get-ChildItem public/js -Recurse -Filter *.js | ForEach-Object { node --check $_.FullName }` in PowerShell) because `npm run check` covers only the backend entrypoints.
+- When invoking `git`, use `git -c safe.directory="*"` to prevent dubious repository ownership errors on Windows. On hosts where Node is installed under `C:\nvm4w\nodejs`, test/check executions require sandbox bypass.
 - `better-sqlite3` is native; on Linux, an `invalid ELF header` after a cross-platform install means the local binary is Windows-built—run `npm rebuild better-sqlite3 --build-from-source` before testing.
 - `server.js` owns Express/Socket.IO; `src/` owns SQLite, auth scaffolding, and server rules; `public/` is served directly with no build step. Do not add a frontend framework or bundler.
 - `public/js/shared/` contains the single renderer/`PumpkinCharacter` implementation shared by the admin preview and transparent OBS overlay. The overlay is logically `1920×1080`; GSAP is served from local `public/vendor/gsap.min.js`, not a CDN.
@@ -16,6 +17,9 @@
 - Donation event IDs and Twitch redemption IDs are SQLite uniqueness keys; retries/reconnects must not repeat effects.
 - Keep `.env`, provider tokens, encryption keys, and `data/*.sqlite` out of Git and out of client files, browser storage, Socket.IO payloads, JSON responses, and normal logs. Use `.env.example` for placeholders.
 - The implementation uses customization slot `prop` (not `accessory`) in the JSON/API/frontend contract, even where the specification uses “accessory” descriptively.
+- Customization slots with optional items (`prop`, and future `hat`) must include canonical `none` with aliases (`none`, `нет`, `ничего`, `без...`). This allows `sanitizeCustomization()` to reset equipped items and provides an explicit "None" choice in the admin inspector.
+- Preserve slot architecture (`<select data-slot="...">`, SVG groups like `<g class="hat hat-accessory">`, and animation hooks like `adjustHat()`) even if specific variants in that slot are temporarily removed.
+- Keep the Witch Assistant companion character (`public/assets/witch/`, `witch-assistant.js`) strictly separate from pumpkin skin/customization options (e.g. `skin: 'witch'`).
 - Keep Twitch and DonationAlerts independent. Twitch revoke may be claimed only after the official endpoint confirms it; never claim undocumented DonationAlerts remote revoke.
 
 ## Current integration/test limits

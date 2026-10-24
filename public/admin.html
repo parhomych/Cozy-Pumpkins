@@ -156,7 +156,15 @@
                   <label>Bat<select data-reward-action="bat"><option value="">Disabled</option></select></label>
                   <label>Ghost<select data-reward-action="ghost"><option value="">Disabled</option></select></label>
                   <label>Pumpkin tower<select data-reward-action="pumpkin_tower"><option value="">Disabled</option></select></label>
+                  <label>Pumpkin appearance<select data-reward-action="pumpkin_customization"><option value="">Disabled</option></select></label>
                  </div>
+                 <p id="customization-reward-state" class="save-state" role="status" aria-live="polite"></p>
+                 <label>Appearance changes per redemption
+                   <select id="customization-reward-mode">
+                     <option value="single">Apply the first recognized change</option>
+                     <option value="all">Apply all recognized changes</option>
+                   </select>
+                 </label>
                  <button id="save-reward-mapping" type="button">Save reward mapping</button>
                  <button id="test-pumpkin-tower" type="button" hidden>Test Pumpkin tower activation</button>
                  <p id="test-reward-state" class="save-state" role="status"></p>

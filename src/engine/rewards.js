@@ -1,8 +1,9 @@
 import { normalizeName, normalizeText, safeId } from '../utils/normalize.js';
 import { publicPumpkin } from './donations.js';
 import { buildTowerPlan } from './pumpkin-tower.js';
+import { parseCustomizationRequest, sanitizeCustomization } from './customization-parser.js';
 
-export const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost', 'pumpkin_tower']);
+export const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost', 'pumpkin_tower', 'pumpkin_customization']);
 
 // Returns a complete, safe mapping patch. Unknown action keys are ignored for
 // forwards compatibility; empty IDs remain valid to preserve disabled mappings.
@@ -31,9 +32,10 @@ function parseRedemption(raw) {
   const redemptionId = safeId(raw?.id ?? raw?.redemption_id ?? raw?.redemption?.id); const reward = raw?.reward || {};
   const rewardId = safeId(raw?.rewardId ?? raw?.reward_id ?? reward.id); const user = raw?.user || raw?.redeemer || {};
   const userId = safeId(raw?.userId ?? raw?.user_id ?? user.id); const userLogin = normalizeName(raw?.userLogin ?? raw?.user_login ?? user.login ?? user.username);
-  const input = normalizeText(raw?.input ?? raw?.user_input ?? raw?.redemption?.user_input, 256);
+  const rawInput = String(raw?.input ?? raw?.user_input ?? raw?.redemption?.user_input ?? '').normalize('NFKC');
+  const input = normalizeText(rawInput, 256);
   if (!redemptionId || !rewardId || (!userId && !userLogin)) throw new Error('invalid_redemption_event');
-  return { redemptionId, rewardId, userId, userLogin, input };
+  return { redemptionId, rewardId, userId, userLogin, input, inputTooLong: rawInput.length > 256 };
 }
 function randomUnit(random) {
   const value = Number(random?.());
@@ -47,18 +49,56 @@ export class RewardService {
     this.db.transaction(() => {
       const settings = this.db.getSettings(this.config);
       const action = mappedAction(event.rewardId, settings.rewardMapping);
-      if (!this.db.insertRedemption({ ...event, status: action || 'ignored_reward', receivedAt: now, processedAt: now })) { result = { duplicate: true, redemptionId: event.redemptionId }; return; }
-      if (!action) { result = { duplicate: false, redemptionId: event.redemptionId, status: 'ignored_reward' }; return; }
+      const { inputTooLong, ...redemption } = event;
+      if (!this.db.insertRedemption({ ...redemption, status: action || 'ignored_reward', receivedAt: now, processedAt: now })) {
+        result = { duplicate: true, redemptionId: event.redemptionId };
+        return;
+      }
+      if (!action) {
+        result = { duplicate: false, redemptionId: event.redemptionId, status: 'ignored_reward' };
+        return;
+      }
       if (action === 'pumpkin_tower') {
         result = this._runPumpkinTower(settings, { redemptionId: event.redemptionId });
         return;
       }
       const pumpkin = this.db.findPumpkinByTwitch(event.userId, event.userLogin);
-      if (!pumpkin) { result = { duplicate: false, redemptionId: event.redemptionId, status: 'no_pumpkin_for_user', action }; return; }
-       const context = { scene: this.config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
+      if (!pumpkin) {
+        result = { duplicate: false, redemptionId: event.redemptionId, status: 'no_pumpkin_for_user', action };
+        return;
+      }
+      if (action === 'pumpkin_customization') {
+        if (inputTooLong) {
+          result = { duplicate: false, redemptionId: event.redemptionId, status: 'ignored_input_too_long', action };
+          return;
+        }
+        const changes = parseCustomizationRequest(event.input);
+        if (!changes.length) {
+          result = { duplicate: false, redemptionId: event.redemptionId, status: 'ignored_unrecognized_customization', action };
+          return;
+        }
+        const customizationPatch = {};
+        for (const change of settings.customizationRewardMode === 'all' ? changes : changes.slice(0, 1)) {
+          customizationPatch[change.slot] = change.value;
+        }
+        const customization = sanitizeCustomization(customizationPatch, pumpkin.customization);
+        result = {
+          duplicate: false,
+          redemptionId: event.redemptionId,
+          status: 'customization_applied',
+          action,
+          pumpkin: publicPumpkin(this.db.updatePumpkin(pumpkin.id, { customization })),
+        };
+        return;
+      }
+      const context = { scene: this.config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
       result = this.applyAction(action, pumpkin, event.input, context);
     });
-    if (result.duplicate || result.status === 'no_pumpkin_for_user' || result.status === 'ignored_reward' || result.status === 'no_safe_tower_layout' || result.status === 'no_pumpkins') return result;
+    if (result.duplicate || result.status === 'no_pumpkin_for_user' || result.status === 'ignored_reward' || result.status === 'ignored_input_too_long' || result.status === 'ignored_unrecognized_customization' || result.status === 'no_safe_tower_layout' || result.status === 'no_pumpkins') return result;
+    if (result.action === 'pumpkin_customization') {
+      this.emit('pumpkin:updated', { pumpkin: result.pumpkin });
+      return result;
+    }
     if (result.global) {
       this.emit('pumpkin:action', { id: null, action: result.action, ...result.payload });
       return result;

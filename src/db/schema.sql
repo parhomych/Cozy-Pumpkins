@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS settings (
   show_pumpkin_names INTEGER NOT NULL DEFAULT 1 CHECK(show_pumpkin_names IN (0, 1)),
   pumpkin_name_font_size INTEGER NOT NULL DEFAULT 14 CHECK(pumpkin_name_font_size BETWEEN 8 AND 48),
   pumpkin_currency TEXT NOT NULL, reward_mapping_json TEXT NOT NULL,
+  customization_reward_mode TEXT NOT NULL DEFAULT 'single' CHECK(customization_reward_mode IN ('single', 'all')),
   min_spawn_donation REAL NOT NULL DEFAULT 0 CHECK(min_spawn_donation >= 0),
   spawn_command TEXT NOT NULL DEFAULT '!тыковка',
   growth_thresholds_json TEXT,

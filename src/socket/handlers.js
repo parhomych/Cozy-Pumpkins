@@ -11,7 +11,7 @@ import { towerAnimationPatch } from '../engine/tower-animation.js';
 import { pumpkinNameFontSize } from '../engine/pumpkin-name-settings.js';
 import { roamingSettingsPatch } from '../engine/roaming-settings.js';
 
-function publicSettings(settings) { return { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers, roamingIntervalSeconds: settings.roamingIntervalSeconds, roamingSpeed: settings.roamingSpeed, roamingJumpHeight: settings.roamingJumpHeight, roamingMinDistance: settings.roamingMinDistance, roamingMaxDistance: settings.roamingMaxDistance }; }
+function publicSettings(settings) { return { groundY: settings.groundY, noGoZone: settings.noGoZone, showPumpkinNames: settings.showPumpkinNames, pumpkinNameFontSize: settings.pumpkinNameFontSize, pumpkinCurrency: settings.pumpkinCurrency, rewardMapping: settings.rewardMapping, customizationRewardMode: settings.customizationRewardMode, animation: settings.animation, towerAnimation: settings.towerAnimation, minSpawnDonation: settings.minSpawnDonation, spawnCommand: settings.spawnCommand, growthThresholds: settings.growthThresholds, growthStages: settings.growthStages, growthMultipliers: settings.growthMultipliers, roamingIntervalSeconds: settings.roamingIntervalSeconds, roamingSpeed: settings.roamingSpeed, roamingJumpHeight: settings.roamingJumpHeight, roamingMinDistance: settings.roamingMinDistance, roamingMaxDistance: settings.roamingMaxDistance }; }
 function safeScene(db, config, statuses) { const settings = db.getSettings(config); return { pumpkins: db.listPumpkins().map(publicPumpkin), settings: publicSettings(settings), authStatus: statuses.all() }; }
 function adminOnly(socket, handler) { return (...args) => { if (!socket.data.admin) { socket.emit('operation:error', { operation: args[0]?.operation || 'admin', message: 'admin_session_required' }); return; } return handler(...args); }; }
 export function attachSocketHandlers(io, { config, db, statuses, logger = console, onBroadcast = () => {}, movementScheduler = null } = {}) {
@@ -54,6 +54,10 @@ export function attachSocketHandlers(io, { config, db, statuses, logger = consol
            patch.pumpkinNameFontSize = fontSize;
          }
          if (payload.rewardMapping !== undefined) { const rewardMapping = rewardMappingPatch(payload.rewardMapping, current.rewardMapping); if (!rewardMapping) throw new Error('invalid_reward_mapping'); patch.rewardMapping = rewardMapping; }
+         if (payload.customizationRewardMode !== undefined) {
+           if (!['single', 'all'].includes(payload.customizationRewardMode)) throw new Error('invalid_customization_reward_mode');
+           patch.customizationRewardMode = payload.customizationRewardMode;
+         }
           if (payload.growthThresholds !== undefined) patch.growthThresholds = validateGrowthThresholds(payload.growthThresholds);
           if (payload.growthStages !== undefined) patch.growthStages = validateGrowthStages(payload.growthStages);
           if (payload.growthMultipliers !== undefined) patch.growthMultipliers = validateGrowthMultipliers(payload.growthMultipliers);
@@ -87,7 +91,7 @@ export function attachSocketHandlers(io, { config, db, statuses, logger = consol
          for (const pumpkin of relocated) io.emit('pumpkin:updated', { pumpkin });
          io.emit('settings:updated', { settings: publicSettings(settings) });
          if (patch.noGoZone) io.emit('settings:nogo-updated', { noGoZone: settings.noGoZone });
-          } catch (error) { socket.emit('operation:error', { operation: payload.showPumpkinNames !== undefined || payload.pumpkinNameFontSize !== undefined || payload.rewardMapping !== undefined || payload.growthThresholds !== undefined || payload.growthStages !== undefined || payload.growthMultipliers !== undefined || payload.animation !== undefined || payload.towerAnimation !== undefined || payload.eyeFrequency !== undefined || payload.mouthFrequency !== undefined || payload.minSpawnDonation !== undefined || payload.spawnCommand !== undefined || payload.roamingIntervalSeconds !== undefined || payload.roamingSpeed !== undefined || payload.roamingJumpHeight !== undefined || payload.roamingMinDistance !== undefined || payload.roamingMaxDistance !== undefined ? 'settings-update' : 'nogo-update', message: error.message }); }
+          } catch (error) { socket.emit('operation:error', { operation: payload.showPumpkinNames !== undefined || payload.pumpkinNameFontSize !== undefined || payload.rewardMapping !== undefined || payload.customizationRewardMode !== undefined || payload.growthThresholds !== undefined || payload.growthStages !== undefined || payload.growthMultipliers !== undefined || payload.animation !== undefined || payload.towerAnimation !== undefined || payload.eyeFrequency !== undefined || payload.mouthFrequency !== undefined || payload.minSpawnDonation !== undefined || payload.spawnCommand !== undefined || payload.roamingIntervalSeconds !== undefined || payload.roamingSpeed !== undefined || payload.roamingJumpHeight !== undefined || payload.roamingMinDistance !== undefined || payload.roamingMaxDistance !== undefined ? 'settings-update' : 'nogo-update', message: error.message }); }
      });
      socket.on('admin:settings:update', updateSettings);
      socket.on('admin:settings:nogo-update', updateSettings);

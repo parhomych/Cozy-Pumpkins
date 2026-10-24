@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from '../server.js';
 import { Database } from '../src/db/database.js';
@@ -92,6 +95,13 @@ test('server serves status and both user-facing HTML pages without leaking secre
     const invalidMapping = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ rewardMapping: { jump_on: 42 } }) });
     assert.equal(invalidMapping.status, 400);
     assert.equal(JSON.parse(invalidMapping.body).error, 'invalid_reward_mapping');
+    const customizationSettings = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ rewardMapping: { pumpkin_customization: 'appearance-reward' }, customizationRewardMode: 'all' }) });
+    assert.equal(customizationSettings.status, 200);
+    assert.equal(JSON.parse(customizationSettings.body).settings.rewardMapping.pumpkin_customization, 'appearance-reward');
+    assert.equal(JSON.parse(customizationSettings.body).settings.customizationRewardMode, 'all');
+    const invalidCustomizationMode = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ customizationRewardMode: 'unbounded' }) });
+    assert.equal(invalidCustomizationMode.status, 400);
+    assert.equal(JSON.parse(invalidCustomizationMode.body).error, 'invalid_customization_reward_mode');
     const publicRead = await request(port, '/api/settings');
      assert.deepEqual(JSON.parse(publicRead.body).settings.animation, { eyeFrequency: 2.5, mouthFrequency: 0.5 });
      assert.equal(JSON.parse(publicRead.body).settings.roamingIntervalSeconds, 8);
@@ -100,6 +110,8 @@ test('server serves status and both user-facing HTML pages without leaking secre
      assert.equal(JSON.parse(publicRead.body).settings.roamingMinDistance, 80);
      assert.equal(JSON.parse(publicRead.body).settings.roamingMaxDistance, 500);
      assert.deepEqual(JSON.parse(publicRead.body).settings.towerAnimation, { swayAmplitude: 24, swayDuration: 3, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 4, lifetimeMaxSeconds: 12, stackOrder: 'largest-first' });
+     assert.equal(JSON.parse(publicRead.body).settings.rewardMapping.pumpkin_customization, 'appearance-reward');
+     assert.equal(JSON.parse(publicRead.body).settings.customizationRewardMode, 'all');
      const invalidTower = await request(port, '/api/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ towerAnimation: { bendMultiplier: 99 } }) });
      assert.equal(invalidTower.status, 400);
      assert.equal(JSON.parse(invalidTower.body).error, 'invalid_tower_animation');
@@ -118,6 +130,27 @@ test('server serves status and both user-facing HTML pages without leaking secre
   } finally {
     runtime.db.close();
     await new Promise((resolve) => runtime.server.close(resolve));
+  }
+});
+
+test('customization reward settings default safely and persist across database reopen', () => {
+  const config = testConfig();
+  const directory = mkdtempSync(path.join(tmpdir(), 'cozy-pumpkin-customization-settings-'));
+  const databasePath = path.join(directory, 'settings.sqlite');
+  try {
+    const db = new Database(databasePath);
+    assert.equal(db.getSettings(config).customizationRewardMode, 'single');
+    assert.throws(() => db.updateSettings({ customizationRewardMode: 'multiple' }, config), { message: 'invalid_customization_reward_mode' });
+    db.updateSettings({ customizationRewardMode: 'all', rewardMapping: { pumpkin_customization: 'appearance-reward' } }, config);
+    db.close();
+
+    const reopened = new Database(databasePath);
+    const settings = reopened.getSettings(config);
+    assert.equal(settings.customizationRewardMode, 'all');
+    assert.equal(settings.rewardMapping.pumpkin_customization, 'appearance-reward');
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

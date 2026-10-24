@@ -346,9 +346,9 @@ test('EventSub retries interrupted sockets, recovers, and stops on revoked subsc
   assert.equal(statuses.at(-1).connectionStatus, 'Disconnected');
 });
 
-test('server wiring applies an EventSub redemption to the mapped viewer pumpkin once', async () => {
+test('server wiring applies an appearance redemption only to the mapped viewer pumpkin once', async () => {
   MockWebSocket.instances = [];
-  const config = testConfig({ TWITCH_CLIENT_ID: 'test-client', TWITCH_REWARD_INFLATE_ID: 'reward-inflate' });
+  const config = testConfig({ TWITCH_CLIENT_ID: 'test-client' });
   const db = new Database(':memory:');
   const runtime = createApp({
     config,
@@ -362,10 +362,10 @@ test('server wiring applies an EventSub redemption to the mapped viewer pumpkin 
   const events = [];
   runtime.setBroadcast((event, payload) => events.push([event, payload]));
   try {
-    runtime.db.updateSettings({ rewardMapping: { inflate: 'reward-inflate' } }, config);
+    runtime.db.updateSettings({ rewardMapping: { pumpkin_customization: 'reward-appearance' }, customizationRewardMode: 'single' }, config);
     runtime.tokenStore.save('twitch', { accessToken: 'private-token', providerUserId: 'broadcaster-1', providerLogin: 'cozypumpkins' });
     runtime.statuses.set('twitch', { authStatus: 'Connected' });
-    runtime.donations.handle({
+    const viewerPumpkin = runtime.donations.handle({
       id: 'donation-owner',
       userId: 'viewer-1',
       username: 'viewer-one',
@@ -373,9 +373,18 @@ test('server wiring applies an EventSub redemption to the mapped viewer pumpkin 
       amount: 100,
       currency: 'RUB',
       message: '!тыковка',
-    });
-    const donationPumpkin = runtime.db.listPumpkins()[0];
-    runtime.db.updatePumpkin(donationPumpkin.id, { twitchUserId: 'viewer-1', twitchUsername: 'viewer-one' });
+    }).pumpkin;
+    const otherPumpkin = runtime.donations.handle({
+      id: 'donation-other-viewer',
+      userId: 'viewer-2',
+      username: 'viewer-two',
+      name: 'Viewer Two',
+      amount: 100,
+      currency: 'RUB',
+      message: '!тыковка',
+    }).pumpkin;
+    runtime.db.updatePumpkin(viewerPumpkin.id, { twitchUserId: 'viewer-1', twitchUsername: 'viewer-one' });
+    runtime.db.updatePumpkin(otherPumpkin.id, { twitchUserId: 'viewer-2', twitchUsername: 'viewer-two' });
     await runtime.twitchEventSub.start();
     const socket = MockWebSocket.instances[0];
     socket.message({
@@ -392,16 +401,19 @@ test('server wiring applies an EventSub redemption to the mapped viewer pumpkin 
         id: 'redemption-1',
         user_id: 'viewer-1',
         user_login: 'viewer-one',
-        reward: { id: 'reward-inflate', title: 'Pumpkin bounce' },
-        user_input: '',
+        reward: { id: 'reward-appearance', title: 'Pumpkin appearance' },
+        user_input: 'sleepy eyes',
       } },
     };
     socket.message(notification);
     await new Promise((resolve) => setImmediate(resolve));
     socket.message(notification);
     await new Promise((resolve) => setImmediate(resolve));
-    assert.equal(events.filter(([event]) => event === 'pumpkin:action').length, 1);
-    assert.equal(events.find(([event]) => event === 'pumpkin:action')[1].id, runtime.db.listPumpkins()[0].id);
+    assert.equal(runtime.db.getPumpkin(viewerPumpkin.id).customization.eyes, 'sleepy');
+    assert.equal(runtime.db.getPumpkin(viewerPumpkin.id).customization.mouth, viewerPumpkin.customization.mouth);
+    assert.deepEqual(runtime.db.getPumpkin(otherPumpkin.id).customization, otherPumpkin.customization);
+    assert.equal(events.filter(([event]) => event === 'pumpkin:updated').length, 1);
+    assert.equal(events.find(([event]) => event === 'pumpkin:updated')[1].pumpkin.id, viewerPumpkin.id);
     await runtime.twitchEventSub.stop();
   } finally {
     await runtime.twitchEventSub.stop();
