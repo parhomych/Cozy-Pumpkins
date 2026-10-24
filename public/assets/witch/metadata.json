@@ -14,26 +14,26 @@
   "arm_left": {
     "x": 25,
     "y": 421,
-    "width": 262,
-    "height": 110
+    "width": 251,
+    "height": 111
   },
   "arm_right": {
-    "x": 413,
+    "x": 418,
     "y": 449,
-    "width": 298,
-    "height": 117
+    "width": 292,
+    "height": 116
   },
   "wing_left": {
-    "x": 120,
-    "y": 420,
-    "width": 156,
-    "height": 186
+    "x": 132,
+    "y": 414,
+    "width": 148,
+    "height": 190
   },
   "wing_right": {
-    "x": 425,
-    "y": 420,
-    "width": 194,
-    "height": 191
+    "x": 450,
+    "y": 414,
+    "width": 148,
+    "height": 190
   },
   "leg_left": {
     "x": 210,
