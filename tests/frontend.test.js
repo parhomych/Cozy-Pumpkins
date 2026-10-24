@@ -451,6 +451,157 @@ test('renderer applies global animation settings without replacing characters', 
   assert.match(stopIdle, /eyeLids\.length/);
 });
 
+test('renderer periodically updates depth order as pumpkins move on screen', () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let tick;
+  let clearedTimer;
+  globalThis.setInterval = (callback, delay) => {
+    assert.equal(delay, 3000);
+    tick = callback;
+    return 17;
+  };
+  globalThis.clearInterval = (timer) => { clearedTimer = timer; };
+  try {
+    const renderer = new PumpkinRenderer(null);
+    const characters = [
+      { id: 'pumpkin-a', y: 300 },
+      { id: 'pumpkin-b', y: 700 },
+      { id: 'pumpkin-c', y: 500 },
+    ];
+    for (const character of characters) {
+      character.root = { style: { zIndex: '' } };
+      character.stopAction = () => {};
+      character.destroy = () => {};
+      renderer.characters.set(character.id, character);
+    }
+
+    renderer._startDepthSorting();
+    tick();
+    assert.deepEqual(characters.map(({ root }) => root.style.zIndex), ['1', '3', '2']);
+
+    characters[0].y = 800;
+    tick();
+    assert.deepEqual(characters.map(({ root }) => root.style.zIndex), ['3', '2', '1']);
+
+    renderer._stopDepthSorting();
+    assert.equal(clearedTimer, 17);
+    renderer.clear();
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
+});
+
+test('moving pumpkin comes to the foreground until the scene has been idle for three seconds', () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  const originalNow = Date.now;
+  let tick;
+  let now = 1000;
+  globalThis.setInterval = (callback) => { tick = callback; return 23; };
+  globalThis.clearInterval = () => {};
+  Date.now = () => now;
+  try {
+    const renderer = new PumpkinRenderer(null);
+    const characters = [
+      { id: 'pumpkin-a', x: 0, y: 300 },
+      { id: 'pumpkin-b', x: 0, y: 700 },
+      { id: 'pumpkin-c', x: 0, y: 500 },
+    ];
+    for (const character of characters) {
+      character.root = { style: { zIndex: '' } };
+      character.stopPhysics = () => {};
+      character.moveTo = function moveTo(x, y) { this.x = x; this.y = y; };
+      character.destroy = () => {};
+      renderer.characters.set(character.id, character);
+    }
+
+    renderer._startDepthSorting();
+    renderer._sortCharactersByDepth();
+    renderer.applyMove({ id: 'pumpkin-a', x: 0, y: 400, sequence: 1 });
+    assert.equal(characters[0].root.style.zIndex, '4', 'movement immediately raises the pumpkin above the scene');
+
+    now += 2999;
+    tick();
+    assert.equal(characters[0].root.style.zIndex, '3', 'the moving pumpkin remains in front during the idle interval');
+
+    now += 1;
+    tick();
+    assert.equal(characters[0].root.style.zIndex, '3', 'the foreground hold includes the movement animation');
+
+    now += 2000;
+    tick();
+    assert.equal(characters[0].root.style.zIndex, '1', 'after three seconds, z-order returns to screen depth');
+    assert.equal(characters[2].root.style.zIndex, '2');
+    assert.equal(characters[1].root.style.zIndex, '3');
+    renderer.clear();
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+    Date.now = originalNow;
+  }
+});
+
+test('tower pumpkins render in level order and restore normal scene layering when they roll', () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const originalNow = Date.now;
+  const timers = [];
+  let now = 1000;
+  globalThis.setTimeout = (callback) => {
+    timers.push(callback);
+    return timers.length;
+  };
+  globalThis.clearTimeout = () => {};
+  Date.now = () => now;
+  try {
+    const renderer = new PumpkinRenderer(null);
+    const participants = [0, 1, 2].map((level) => ({
+      id: `tower-${level}`,
+      level,
+      towerX: 400,
+      towerY: 900 - level * 150,
+    }));
+    const finalPumpkins = participants.map(({ id, towerX, towerY }) => ({
+      id,
+      x: towerX + 200,
+      y: 900 - Number(id.split('-')[1]) * 100,
+    }));
+    for (const { id, towerY } of participants) {
+      renderer.characters.set(id, {
+        data: { id },
+        y: towerY,
+        root: { style: { zIndex: '' } },
+        stack() {},
+        rollTo(x, y) { this.x = x; this.y = y; },
+        stopAction() {},
+      });
+    }
+
+    renderer.stackPumpkins(participants);
+    assert.deepEqual(
+      participants.map(({ id }) => Number(renderer.characters.get(id).root.style.zIndex)),
+      [1, 2, 3],
+      'each upper level is painted above the level supporting it',
+    );
+
+    renderer.rollPumpkins(finalPumpkins, { participants, lifetimeSeconds: 0 });
+    timers.at(-1)();
+    now += 6000;
+    renderer._sortCharactersByDepth();
+    assert.deepEqual(
+      participants.map(({ id }) => renderer.characters.get(id).root.style.zIndex),
+      ['3', '2', '1'],
+      'depth order follows screen position again when the tower falls',
+    );
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+    Date.now = originalNow;
+  }
+});
+
 test('global pumpkin tower actions dispatch, roll to server targets, and clean up', async () => {
   const renderer = await readFile(new URL('../public/js/shared/pumpkin-renderer.js', import.meta.url), 'utf8');
   const character = await readFile(new URL('../public/js/shared/pumpkin-character.js', import.meta.url), 'utf8');

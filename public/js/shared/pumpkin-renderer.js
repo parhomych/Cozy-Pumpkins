@@ -2,6 +2,7 @@ import { PumpkinCharacter } from './pumpkin-character.js?v=pumpkin-cartoon-squas
 
 const DEFAULT_TOWER_ANIMATION = Object.freeze({ swayAmplitude: 12, swayDuration: 2, rotationMultiplier: 1, bendMultiplier: 1, lifetimeMinSeconds: 3, lifetimeMaxSeconds: 6, stackOrder: 'random' });
 const DEFAULT_PUMPKIN_NAME_FONT_SIZE = 14;
+const DEPTH_SORT_INTERVAL_MS = 3000;
 function normalizePumpkinNameFontSize(size) {
   const value = Number(size);
   return Number.isInteger(value) && value >= 8 && value <= 48 ? value : DEFAULT_PUMPKIN_NAME_FONT_SIZE;
@@ -10,13 +11,14 @@ function normalizePumpkinNameFontSize(size) {
 export class PumpkinRenderer {
   constructor(container, { interactive = false, onSelect = null, settings = null } = {}) {
     this.container = container; this.interactive = interactive; this.onSelect = onSelect; this.settings = { showPumpkinNames: true, pumpkinNameFontSize: DEFAULT_PUMPKIN_NAME_FONT_SIZE, ...(settings || {}) }; this.settings.pumpkinNameFontSize = normalizePumpkinNameFontSize(this.settings.pumpkinNameFontSize); this.characters = new Map(); this.sequence = new Map();
-    this.container?.classList.add('pumpkin-layer'); this.towerTimers = new Set(); this.towerTweens = new Set(); this.towerMotion = null; this.towerParticipants = []; this.towerPayload = {}; this.towerSwayActive = false; this.towerRoll = null; this.physicsFrame = null; this.lastPhysicsFrameTime = null;
+    this.container?.classList.add('pumpkin-layer'); this.towerTimers = new Set(); this.towerTweens = new Set(); this.towerMotion = null; this.towerParticipants = []; this.towerPayload = {}; this.towerSwayActive = false; this.towerRoll = null; this.physicsFrame = null; this.lastPhysicsFrameTime = null; this.depthSortTimer = null; this.towerDepthLevels = new Map(); this.towerDepthBaseY = null; this.movingCharacters = new Map(); this.moveOrder = 0;
   }
   add(pumpkin, { immediate = true } = {}) {
     if (!pumpkin?.id) return null;
     if (this.characters.has(pumpkin.id)) return this.update(pumpkin, { immediate });
     const character = new PumpkinCharacter(pumpkin, { positioning: 'scene', interactive: this.interactive, animationSettings: this.settings.animation, growthMultipliers: this.settings.growthMultipliers, showPumpkinNames: this.settings.showPumpkinNames, pumpkinNameFontSize: this.settings.pumpkinNameFontSize, onPointerDown: (data, event) => this.onSelect?.(data.id, data, event) });
     this.characters.set(pumpkin.id, character); this.sequence.set(pumpkin.id, -1); this.container?.append(character.root); character.startIdle();
+    this._startDepthSorting();
     if (pumpkin.isAirborne) this.startPhysics(pumpkin.id);
     return character;
   }
@@ -28,6 +30,7 @@ export class PumpkinRenderer {
     if (pumpkin.customization) character.applyCustomization(pumpkin.customization);
     if (pumpkin.stage !== undefined && Number(pumpkin.stage) !== Number(previousStage)) character.evolve(pumpkin.stage);
     this.stopPhysics(pumpkin.id);
+    if (!immediate) this._bringToFront(pumpkin.id);
     character.moveTo(pumpkin.x, pumpkin.y, { immediate, isAirborne: pumpkin.isAirborne });
     if (pumpkin.isAirborne) this.startPhysics(pumpkin.id);
     return character;
@@ -52,6 +55,7 @@ export class PumpkinRenderer {
     if (!character) return;
     this.stopPhysics(id);
     const startPhysics = simulatePhysics && isAirborne;
+    if (!immediate) this._bringToFront(id, duration * 1000 + DEPTH_SORT_INTERVAL_MS);
     character.moveTo(x, y, { immediate: immediate || startPhysics, isAirborne, duration });
     if (startPhysics) this.startPhysics(id, { groundY });
   }
@@ -67,6 +71,10 @@ export class PumpkinRenderer {
       const character = this.characters.get(payload.id);
       if (character?.hopTo) {
         this.stopPhysics(payload.id);
+        const speed = Number(payload.roamingSpeed ?? this.settings.roamingSpeed);
+        const safeSpeed = Number.isFinite(speed) && speed > 0 ? speed : 140;
+        const distance = Math.hypot(Number(payload.x) - character.x, Number(payload.y) - character.y);
+        this._bringToFront(payload.id, distance / safeSpeed * 1000 + DEPTH_SORT_INTERVAL_MS);
         character.hopTo(payload.x, payload.y, { speed: payload.roamingSpeed ?? this.settings.roamingSpeed, height: payload.roamingJumpHeight ?? this.settings.roamingJumpHeight });
         return;
       }
@@ -94,6 +102,7 @@ export class PumpkinRenderer {
   startPhysics(id, options = {}) {
     const character = this.characters.get(id);
     if (!character?.startPhysics) return false;
+    this._bringToFront(id);
     const requestedGroundY = options.groundY;
     const configuredGroundY = this.settings.groundY;
     const groundY = requestedGroundY != null && Number.isFinite(Number(requestedGroundY))
@@ -142,8 +151,8 @@ export class PumpkinRenderer {
     }
     this.lastPhysicsFrameTime = null;
   }
-  remove(id, { animate = true } = {}) { const character = this.characters.get(id); if (!character) return; this.stopActions(); this.characters.delete(id); this.sequence.delete(id); if (animate) character.disappear(() => character.destroy()); else character.destroy(); }
-  clear() { this.stopActions(); for (const id of [...this.characters.keys()]) this.remove(id, { animate: false }); }
+  remove(id, { animate = true } = {}) { const character = this.characters.get(id); if (!character) return; this.stopActions(); this.characters.delete(id); this.sequence.delete(id); this.towerDepthLevels.delete(id); this.movingCharacters.delete(id); if (animate) character.disappear(() => character.destroy()); else character.destroy(); if (this.characters.size < 2) this._stopDepthSorting(); else this._sortCharactersByDepth(); }
+  clear() { this.stopActions(); this._stopDepthSorting(); this.movingCharacters.clear(); for (const id of [...this.characters.keys()]) this.remove(id, { animate: false }); }
   stopTowerMotion() { for (const tween of this.towerTweens) tween.kill?.(); this.towerTweens.clear(); this.towerMotion = null; this.towerSwayActive = false; }
   stopActions() { for (const timer of this.towerTimers) clearTimeout(timer); this.towerTimers.clear(); this.towerRoll = null; this.stopTowerMotion(); this.stopPhysics(); for (const character of this.characters.values()) character.stopAction?.(); }
   startTowerSway(participants = [], payload = {}) {
@@ -196,21 +205,27 @@ export class PumpkinRenderer {
     const finalById = new Map((payload.finalPumpkins || []).filter((pumpkin) => pumpkin?.id).map((pumpkin) => [pumpkin.id, pumpkin]));
     const sway = Number.isFinite(Number(payload.sway)) ? Number(payload.sway) : Math.min(22, 6 + count * 1.8);
     const direction = payload.direction === 'left' ? -1 : payload.direction === 'right' ? 1 : 0;
+    this.towerDepthLevels.clear();
+    const baseYs = participants.map((item) => Number(item?.towerY ?? item?.position?.y)).filter(Number.isFinite);
+    this.towerDepthBaseY = baseYs.length ? Math.max(...baseYs) : null;
     for (const [index, item] of participants.entries()) {
       const character = this.characters.get(typeof item === 'string' ? item : item?.id);
       if (!character) continue;
+      const level = Number.isInteger(item?.level) ? item.level : index;
+      this.towerDepthLevels.set(character.data.id, level);
       const final = finalById.get(character.data.id);
       const towerX = Number.isFinite(Number(item?.towerX)) ? Number(item.towerX) : Number(item?.position?.x);
       const towerY = Number.isFinite(Number(item?.towerY)) ? Number(item.towerY) : Number(item?.position?.y);
       character.data = { ...character.data, ...(final || {}), x: towerX, y: towerY, isAirborne: false, parentId: null, stackOffsetY: null };
       const delayMs = Number.isFinite(Number(item?.delayMs ?? item?.rollDelayMs)) ? Number(item?.delayMs ?? item?.rollDelayMs) : index * 180;
-      character.stack?.(towerX, towerY, Number.isInteger(item?.level) ? item.level : index, count, {
+      character.stack?.(towerX, towerY, level, count, {
           sway,
           direction,
           delay: delayMs / 1000,
           coordinated: true,
       });
     }
+    this._sortCharactersByDepth();
     const swayDelay = Math.max(1750, ...participants.map((item, index) => (Number(item?.delayMs ?? item?.rollDelayMs) || index * 180) + 1750));
     const timer = setTimeout(() => {
       this.towerTimers.delete(timer);
@@ -245,11 +260,16 @@ export class PumpkinRenderer {
       for (const pending of this.towerTimers) clearTimeout(pending);
       this.towerTimers.clear();
       this.stopTowerMotion();
+      this.towerDepthLevels.clear();
+      this.towerDepthBaseY = null;
+      this._sortCharactersByDepth();
       const direction = roll.payload.direction === 'left' ? -1 : 1;
       const participantDelays = new Map(roll.participants.map((item, index) => [item?.id, Number(item?.delayMs ?? item?.rollDelayMs) || index * 180]));
       for (const [index, pumpkin] of roll.finalPumpkins.entries()) {
         const delay = (participantDelays.get(pumpkin?.id) || index * 180) / 1000;
-        this.characters.get(pumpkin?.id)?.rollTo?.(pumpkin.x, pumpkin.y, pumpkin, {
+        const character = this.characters.get(pumpkin?.id);
+        this._bringToFront(pumpkin?.id, (delay + 2.6) * 1000);
+        character?.rollTo?.(pumpkin.x, pumpkin.y, pumpkin, {
           direction,
           delay,
           groundY: Number.isFinite(Number(pumpkin.y)) ? Number(pumpkin.y) : Number.isFinite(Number(roll.payload.groundY)) ? Number(roll.payload.groundY) : 1080,
@@ -258,6 +278,58 @@ export class PumpkinRenderer {
     }, Math.max(0, deadline - Date.now()));
     roll.timer = timer;
     this.towerTimers.add(timer);
+  }
+  _startDepthSorting() {
+    if (this.depthSortTimer !== null || this.characters.size < 2) return;
+    this.depthSortTimer = setInterval(() => this._sortCharactersByDepth(), DEPTH_SORT_INTERVAL_MS);
+  }
+  _stopDepthSorting() {
+    if (this.depthSortTimer === null) return;
+    clearInterval(this.depthSortTimer);
+    this.depthSortTimer = null;
+  }
+  _bringToFront(id, durationMs = 0) {
+    const character = this.characters.get(id);
+    if (!character) return;
+    const zIndices = [...this.characters.values()].map((item) => Number(item.root?.style?.zIndex) || 0);
+    if (character.root?.style) character.root.style.zIndex = String(Math.max(0, ...zIndices) + 1);
+    this.movingCharacters.set(id, {
+      until: Date.now() + Math.max(DEPTH_SORT_INTERVAL_MS, Number(durationMs) || 0),
+      order: ++this.moveOrder,
+    });
+  }
+  _sortCharactersByDepth() {
+    const entries = [];
+    const tower = [];
+    const moving = [];
+    for (const [id, character] of this.characters) {
+      const movement = this.movingCharacters.get(id);
+      if (character.physicsActive || (movement && movement.until > Date.now())) {
+        moving.push({ id, character, order: movement?.order || 0 });
+        continue;
+      }
+      this.movingCharacters.delete(id);
+      if (this.towerDepthLevels.has(id)) {
+        tower.push({ id, character, level: this.towerDepthLevels.get(id) });
+      } else {
+        entries.push({ y: Number(character.y) || 0, order: entries.length, characters: [{ id, character }] });
+      }
+    }
+    if (tower.length) {
+      entries.push({
+        y: Number.isFinite(this.towerDepthBaseY) ? this.towerDepthBaseY : Math.max(...tower.map(({ character }) => Number(character.y) || 0)),
+        order: entries.length,
+        characters: tower.sort((a, b) => a.level - b.level),
+      });
+    }
+    entries.sort((a, b) => a.y - b.y || a.order - b.order);
+    let zIndex = 1;
+    const orderedCharacters = entries.flatMap(({ characters }) => characters);
+    orderedCharacters.push(...moving.sort((a, b) => a.order - b.order));
+    for (const { character } of orderedCharacters) {
+      if (character.root?.style) character.root.style.zIndex = String(zIndex);
+      zIndex += 1;
+    }
   }
   action(id, action, payload = {}) {
     if (action === 'pumpkin_tower') {
