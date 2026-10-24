@@ -72,10 +72,16 @@ test('customization catalog exposes canonical values and aliases for supported s
     assert.ok(group.values.every(({ value, keywords }) => keywords.includes(value)));
   }
   assert.deepEqual(catalog.find(({ slot }) => slot === 'hat').values, []);
-  assert.deepEqual(catalog.find(({ slot }) => slot === 'prop').values, [{
-    value: 'cocoa_hands',
-    keywords: ['cocoa_hands', 'cocoa hands', 'cocoa', 'какао', 'руки с какао'],
-  }]);
+  assert.deepEqual(catalog.find(({ slot }) => slot === 'prop').values, [
+    {
+      value: 'cocoa_hands',
+      keywords: ['cocoa_hands', 'cocoa hands', 'cocoa', 'какао', 'руки с какао'],
+    },
+    {
+      value: 'blanket',
+      keywords: ['blanket', 'plaid', 'плед', 'пледик', 'одеяло', 'одеялко'],
+    },
+  ]);
 });
 
 test('donation customization recognizes cocoa-hands aliases and sanitation preserves supported choices', () => {
@@ -89,6 +95,18 @@ test('donation customization recognizes cocoa-hands aliases and sanitation prese
     { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'cocoa_hands' },
   );
   assert.equal(sanitizeCustomization({ prop: 'unknown' }).prop, 'none');
+});
+
+test('donation customization recognizes blanket aliases and sanitation preserves supported choices', () => {
+  for (const alias of ['blanket', 'plaid', 'плед', 'пледик', 'одеяло', 'одеялко']) {
+    const parsed = parseCustomization(`!тыковка ${alias}`);
+    assert.equal(parsed.recognized, true, `${alias} should be recognized`);
+    assert.equal(parsed.customization.prop, 'blanket');
+  }
+  assert.deepEqual(
+    sanitizeCustomization({ prop: 'blanket' }, { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'none' }),
+    { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'blanket' },
+  );
 });
 
 test('OAuth authorization URLs use the server API callback routes', () => {

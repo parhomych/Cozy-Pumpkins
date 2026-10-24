@@ -4,6 +4,8 @@ const STAGE_ONE_URL = '/assets/pumpkin-stage-1.svg';
 const STAGE_TWO_URL = '/assets/pumpkin-stage-2.svg';
 const STAGE_FOUR_URL = '/assets/pumpkin-stage-4.svg';
 const COCOA_HANDS_URL = '/assets/cocoa-hands.svg';
+const BLANKET_BACK_URL = '/assets/blanket-back.svg';
+const BLANKET_FRONT_URL = '/assets/blanket-front.svg';
 
 import {
   COCOA_HANDS_PATHS,
@@ -12,6 +14,15 @@ import {
 } from './cocoa-hands-paths.js?v=cocoa-hands-bend-20261024';
 
 export { COCOA_HANDS_STAGE_CONFIG, COCOA_HANDS_WIDTHS };
+
+export const BLANKET_WIDTHS = Object.freeze([116, 136, 180, 250]);
+
+export const BLANKET_STAGE_CONFIG = Object.freeze({
+  1: Object.freeze({ width: 116, height: 101.7, x: 50.39, y: 82 }),
+  2: Object.freeze({ width: 136, height: 119.24, x: 40.39, y: 142 }),
+  3: Object.freeze({ width: 180, height: 157.81, x: 18.39, y: 77.83 }),
+  4: Object.freeze({ width: 250, height: 219.19, x: -16.61, y: 54 }),
+});
 const REFERENCE_VIEWBOX = 1095;
 const STAGE_ONE_VIEWBOX = Object.freeze({ x: 850, y: 80, width: 1100, height: 1380 });
 export const REFERENCE_DISPLAY_SIZE = 220;
@@ -431,6 +442,25 @@ export function createPumpkinSvg(pumpkin = {}) {
   const bodyMotion = group('body-motion idle-body-motion');
   const bodyLook = group('body-look');
   const rocker = group('rocker idle-rocker');
+  const blanketBack = group('blanket-back-group', []);
+  blanketBack.setAttribute('transform', `scale(${LEGACY_SCALE})`);
+  if (customization.prop === 'blanket') {
+    const config = BLANKET_STAGE_CONFIG[stage] || BLANKET_STAGE_CONFIG[3];
+    const { width, height, x, y } = config;
+    const container = group('blanket-container blanket-back-container', []);
+    const backArtwork = node('image', {
+      class: 'blanket-artwork blanket-back-artwork',
+      href: BLANKET_BACK_URL,
+      x: String(x),
+      y: String(y),
+      width: String(width),
+      height: String(height),
+      preserveAspectRatio: 'xMidYMid meet',
+      'aria-hidden': 'true',
+    });
+    container.append(backArtwork);
+    blanketBack.append(container);
+  }
   const layers = {
     fallback: referenceFallback(),
     body: group(`body pumpkin-body skin-${customization.skin}`),
@@ -450,6 +480,7 @@ export function createPumpkinSvg(pumpkin = {}) {
   // reference leaf layers outside the animated body stack so idle motion
   // cannot make the pumpkin slide away from its base.
   if (stage !== 4) leafBed.append(layers.leaves, layers.leavesFront);
+  if (customization.prop === 'blanket') rocker.append(blanketBack);
   rocker.append(layers.body, layers.bodyAccent, layers.stem, layers.highlights);
   if (stage !== 1 && stage !== 2) rocker.append(faceMask);
   if (stage !== 1 && stage !== 2 && stage !== 4) hydrateReferencePaths(layers);
@@ -504,6 +535,22 @@ export function createPumpkinSvg(pumpkin = {}) {
       }));
     }
     container.append(cocoaSvg);
+    accessory.append(container);
+  } else if (customization.prop === 'blanket') {
+    const config = BLANKET_STAGE_CONFIG[stage] || BLANKET_STAGE_CONFIG[3];
+    const { width, height, x, y } = config;
+    const container = group('blanket-container blanket-front-container', []);
+    const frontArtwork = node('image', {
+      class: 'blanket-artwork blanket-front-artwork',
+      href: BLANKET_FRONT_URL,
+      x: String(x),
+      y: String(y),
+      width: String(width),
+      height: String(height),
+      preserveAspectRatio: 'xMidYMid meet',
+      'aria-hidden': 'true',
+    });
+    container.append(frontArtwork);
     accessory.append(container);
   }
 
