@@ -7,18 +7,19 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 export const WITCH_PARTS_METADATA = Object.freeze({
-  head: { x: 80, y: 21, width: 544, height: 450, pivotX: 365, pivotY: 440 },
-  torso: { x: 179, y: 453, width: 347, height: 298, pivotX: 365, pivotY: 580 },
-  arm_left: { x: 25, y: 421, width: 262, height: 110, pivotX: 265, pivotY: 485 },
-  arm_right: { x: 413, y: 449, width: 298, height: 117, pivotX: 435, pivotY: 485 },
-  wing_left: { x: 132, y: 414, width: 148, height: 190, pivotX: 275, pivotY: 480 },
-  wing_right: { x: 450, y: 414, width: 148, height: 190, pivotX: 455, pivotY: 480 },
-  leg_left: { x: 210, y: 640, width: 136, height: 368, pivotX: 280, pivotY: 680 },
-  leg_right: { x: 345, y: 640, width: 126, height: 373, pivotX: 395, pivotY: 680 },
-  tail: { x: 470, y: 705, width: 177, height: 131, pivotX: 485, pivotY: 715 },
+  head: { x: 197, y: 97, width: 669, height: 559, pivotX: 504, pivotY: 591 },
+  hat: { x: 496, y: 0, width: 319, height: 256, pivotX: 645, pivotY: 220 },
+  torso: { x: 258, y: 573, width: 477, height: 449, pivotX: 492, pivotY: 780 },
+  arm_left: { x: 27, y: 539, width: 401, height: 163, pivotX: 407, pivotY: 626 },
+  arm_right: { x: 549, y: 573, width: 437, height: 175, pivotX: 573, pivotY: 643 },
+  wing_left: { x: 175, y: 543, width: 283, height: 248, pivotX: 419, pivotY: 664 },
+  wing_right: { x: 567, y: 545, width: 310, height: 301, pivotX: 581, pivotY: 681 },
+  leg_left: { x: 297, y: 912, width: 200, height: 425, pivotX: 422, pivotY: 957 },
+  leg_right: { x: 468, y: 942, width: 182, height: 417, pivotX: 560, pivotY: 962 },
+  tail: { x: 645, y: 892, width: 261, height: 236, pivotX: 678, pivotY: 920 },
 });
 
-export const WITCH_BASE_VIEWBOX = Object.freeze({ width: 731, height: 1024 });
+export const WITCH_BASE_VIEWBOX = Object.freeze({ width: 1013, height: 1382 });
 
 export const SCENE_WIDTH = 1920;
 export const SCENE_HEIGHT = 1080;
@@ -30,7 +31,7 @@ function node(name, attrs = {}) {
 }
 
 export class WitchAssistant {
-  constructor(container, { scale = 0.26, walkSpeed = 560 } = {}) {
+  constructor(container, { scale = 0.20, walkSpeed = 560 } = {}) {
     this.container = container;
     this.scale = scale;
     this.walkSpeed = walkSpeed; // logical px per second
@@ -80,11 +81,13 @@ export class WitchAssistant {
     this.joints = {};
     this.rotators = {};
 
-    const createJoint = (key, imgFile) => {
+    const createJoint = (key, imgFile, parentPivot = null) => {
       const meta = WITCH_PARTS_METADATA[key];
+      const px = parentPivot ? meta.pivotX - parentPivot.pivotX : meta.pivotX;
+      const py = parentPivot ? meta.pivotY - parentPivot.pivotY : meta.pivotY;
       const joint = node('g', {
         class: `joint-${key.replace('_', '-')}`,
-        transform: `translate(${meta.pivotX} ${meta.pivotY})`,
+        transform: `translate(${px} ${py})`,
       });
       const rotator = node('g', { class: 'rotator' });
       const img = node('image', {
@@ -109,6 +112,8 @@ export class WitchAssistant {
     const legR = createJoint('leg_right', 'leg_right.png');
     const torso = createJoint('torso', 'torso.png');
     const head = createJoint('head', 'head.png');
+    const hat = createJoint('hat', 'hat.png', WITCH_PARTS_METADATA.head);
+    this.rotators.head.append(hat);
     const armL = createJoint('arm_left', 'arm_left.png');
     const armR = createJoint('arm_right', 'arm_right.png');
 
@@ -117,8 +122,8 @@ export class WitchAssistant {
 
     // Layering order from back to front:
     this.rootGroup.append(
-      wingL, wingR,
       tail,
+      wingL, wingR,
       legL, legR,
       torso,
       head,
@@ -146,7 +151,7 @@ export class WitchAssistant {
     }
     if (this.rootGroup) {
       // Bottom anchor at feet for organic squash & stretch
-      gsap.set(this.rootGroup, { transformOrigin: '365px 1000px' });
+      gsap.set(this.rootGroup, { transformOrigin: '492px 1350px' });
     }
   }
 
@@ -184,14 +189,15 @@ export class WitchAssistant {
     this._ensureOrigins();
 
     if (pose === 'idle') {
-      gsap.set(this.rotators.arm_left, { rotation: -70, y: 0 });
-      gsap.set(this.rotators.arm_right, { rotation: 70, y: 0 });
+      gsap.set(this.rotators.arm_left, { rotation: -35, y: 0 });
+      gsap.set(this.rotators.arm_right, { rotation: 35, y: 0 });
       gsap.set(this.rotators.leg_left, { rotation: 0, y: 0 });
       gsap.set(this.rotators.leg_right, { rotation: 0, y: 0 });
-      gsap.set(this.rotators.wing_left, { rotation: 4, scaleX: 1, scaleY: 1, y: 0 });
-      gsap.set(this.rotators.wing_right, { rotation: -4, scaleX: 1, scaleY: 1, y: 0 });
-      gsap.set(this.rotators.tail, { rotation: 4, y: 0 });
+      gsap.set(this.rotators.wing_left, { rotation: 0, scaleX: 1, scaleY: 1, y: 0 });
+      gsap.set(this.rotators.wing_right, { rotation: 0, scaleX: 1, scaleY: 1, y: 0 });
+      gsap.set(this.rotators.tail, { rotation: 0, y: 0 });
       gsap.set(this.rotators.head, { rotation: 0, y: 0 });
+      gsap.set(this.rotators.hat, { rotation: 0, y: 0 });
       gsap.set(this.rotators.torso, { rotation: 0, y: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.rootGroup, { y: 0, scaleX: 1, scaleY: 1 });
     }
@@ -206,13 +212,14 @@ export class WitchAssistant {
       const tweens = [
         gsap.to(this.rotators.leg_left, { rotation: 0, y: 0, duration, ease: 'power2.out' }),
         gsap.to(this.rotators.leg_right, { rotation: 0, y: 0, duration, ease: 'power2.out' }),
-        gsap.to(this.rotators.arm_left, { rotation: -70, y: 0, duration, ease: 'power2.out' }),
-        gsap.to(this.rotators.arm_right, { rotation: 70, y: 0, duration, ease: 'power2.out' }),
+        gsap.to(this.rotators.arm_left, { rotation: -35, y: 0, duration, ease: 'power2.out' }),
+        gsap.to(this.rotators.arm_right, { rotation: 35, y: 0, duration, ease: 'power2.out' }),
         gsap.to(this.rotators.torso, { rotation: 0, y: 0, scaleX: 1, scaleY: 1, duration, ease: 'power2.out' }),
         gsap.to(this.rotators.head, { rotation: 0, y: 0, duration, ease: 'power2.out' }),
-        gsap.to(this.rotators.wing_left, { rotation: 4, scaleX: 1, scaleY: 1, y: 0, duration, ease: 'power2.out' }),
-        gsap.to(this.rotators.wing_right, { rotation: -4, scaleX: 1, scaleY: 1, y: 0, duration, ease: 'power2.out' }),
-        gsap.to(this.rotators.tail, { rotation: 4, y: 0, duration, ease: 'power2.out' }),
+        gsap.to(this.rotators.hat, { rotation: 0, y: 0, duration, ease: 'power2.out' }),
+        gsap.to(this.rotators.wing_left, { rotation: 0, scaleX: 1, scaleY: 1, y: 0, duration, ease: 'power2.out' }),
+        gsap.to(this.rotators.wing_right, { rotation: 0, scaleX: 1, scaleY: 1, y: 0, duration, ease: 'power2.out' }),
+        gsap.to(this.rotators.tail, { rotation: 0, y: 0, duration, ease: 'power2.out' }),
         gsap.to(this.rootGroup, { y: 0, scaleX: 1, scaleY: 1, duration, ease: 'power2.out' }),
       ];
       this.activeTweens.push(...tweens);
@@ -268,16 +275,25 @@ export class WitchAssistant {
       delay: 0.12,
     });
 
+    const hatFollow = gsap.to(this.rotators.hat, {
+      rotation: 1.2,
+      duration: 1.35,
+      ease: 'sine.inOut',
+      yoyo: true,
+      repeat: -1,
+      delay: 0.18,
+    });
+
     // Arms breathe very softly with chest
     const armL = gsap.to(this.rotators.arm_left, {
-      rotation: -73,
+      rotation: -39,
       duration: 1.35,
       ease: 'sine.inOut',
       yoyo: true,
       repeat: -1,
     });
     const armR = gsap.to(this.rotators.arm_right, {
-      rotation: 73,
+      rotation: 39,
       duration: 1.35,
       ease: 'sine.inOut',
       yoyo: true,
@@ -307,14 +323,14 @@ export class WitchAssistant {
 
     // Cat tail sways smoothly in a relaxed S-curve
     const tailSway = gsap.to(this.rotators.tail, {
-      rotation: 16,
+      rotation: 14,
       duration: 1.5,
       ease: 'sine.inOut',
       yoyo: true,
       repeat: -1,
     });
 
-    this.activeTweens.push(torsoBreath, headTilt, armL, armR, wingL, wingR, tailSway);
+    this.activeTweens.push(torsoBreath, headTilt, hatFollow, armL, armR, wingL, wingR, tailSway);
   }
 
   startWalk() {
@@ -325,15 +341,13 @@ export class WitchAssistant {
     const stepTime = 0.22; // Half-stride duration (one step)
 
     // 1. Legs: natural walk cycle with forward lift and backward push
-    // Left leg swings forward with lift, then extends back to plant
     const legL = gsap.fromTo(this.rotators.leg_left,
-      { rotation: -26, y: 0 },
-      { rotation: 26, y: -8, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+      { rotation: -24, y: 0 },
+      { rotation: 24, y: -10, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1 }
     );
-    // Right leg is in counter-phase
     const legR = gsap.fromTo(this.rotators.leg_right,
-      { rotation: 26, y: -8 },
-      { rotation: -26, y: 0, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+      { rotation: 24, y: -10 },
+      { rotation: -24, y: 0, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1 }
     );
 
     // 2. Body step bounce: drops at foot plant, rises at passing phase (2 bounces per full stride)
@@ -354,24 +368,29 @@ export class WitchAssistant {
       { rotation: 2.5, y: 2, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 0.04 }
     );
 
+    const hatBob = gsap.fromTo(this.rotators.hat,
+      { rotation: -3, y: -1 },
+      { rotation: 3, y: 1, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 0.08 }
+    );
+
     // 5. Arms: fluid counter-swing tracing natural arcs
     const armL = gsap.fromTo(this.rotators.arm_left,
-      { rotation: -42, y: 0 },
-      { rotation: -80, y: -4, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+      { rotation: -18, y: 0 },
+      { rotation: -52, y: -4, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1 }
     );
     const armR = gsap.fromTo(this.rotators.arm_right,
-      { rotation: 80, y: -4 },
-      { rotation: 42, y: 0, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+      { rotation: 52, y: -4 },
+      { rotation: 18, y: 0, duration: stepTime, ease: 'sine.inOut', yoyo: true, repeat: -1 }
     );
 
     // 6. Wings: energetic flight flutter with 3D folding & foreshortening
     const wingL = gsap.fromTo(this.rotators.wing_left,
-      { rotation: -24, scaleX: 1.08, scaleY: 1.02 },
-      { rotation: 18, scaleX: 0.80, scaleY: 0.96, duration: 0.13, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+      { rotation: -20, scaleX: 1.08, scaleY: 1.02 },
+      { rotation: 16, scaleX: 0.80, scaleY: 0.96, duration: 0.13, ease: 'sine.inOut', yoyo: true, repeat: -1 }
     );
     const wingR = gsap.fromTo(this.rotators.wing_right,
-      { rotation: 24, scaleX: 1.08, scaleY: 1.02 },
-      { rotation: -18, scaleX: 0.80, scaleY: 0.96, duration: 0.13, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 0.025 }
+      { rotation: 20, scaleX: 1.08, scaleY: 1.02 },
+      { rotation: -16, scaleX: 0.80, scaleY: 0.96, duration: 0.13, ease: 'sine.inOut', yoyo: true, repeat: -1, delay: 0.025 }
     );
 
     // 7. Tail: trailing wave motion following movement
@@ -380,7 +399,7 @@ export class WitchAssistant {
       { rotation: 16, y: -3, duration: stepTime * 1.15, ease: 'sine.inOut', yoyo: true, repeat: -1 }
     );
 
-    this.activeTweens.push(legL, legR, bodyBounce, torsoLean, headInertia, armL, armR, wingL, wingR, tailWave);
+    this.activeTweens.push(legL, legR, bodyBounce, torsoLean, headInertia, hatBob, armL, armR, wingL, wingR, tailWave);
   }
 
   performMagic(duration = 1.5) {
@@ -392,9 +411,10 @@ export class WitchAssistant {
       // Phase 1: Wind-up & Gathering Arcane Energy (0.24s)
       gsap.to(this.rootGroup, { y: 6, scaleY: 0.95, scaleX: 1.04, duration: 0.24, ease: 'power2.in' });
       gsap.to(this.rotators.torso, { rotation: 5, duration: 0.24, ease: 'power2.in' });
-      gsap.to(this.rotators.arm_left, { rotation: -25, y: 4, duration: 0.24, ease: 'power2.in' });
-      gsap.to(this.rotators.arm_right, { rotation: 25, y: 4, duration: 0.24, ease: 'power2.in' });
+      gsap.to(this.rotators.arm_left, { rotation: -15, y: 4, duration: 0.24, ease: 'power2.in' });
+      gsap.to(this.rotators.arm_right, { rotation: 15, y: 4, duration: 0.24, ease: 'power2.in' });
       gsap.to(this.rotators.head, { rotation: 3, y: 2, duration: 0.24, ease: 'power2.in' });
+      gsap.to(this.rotators.hat, { rotation: 3, duration: 0.24, ease: 'power2.in' });
       gsap.to(this.rotators.wing_left, { rotation: 14, scaleX: 0.75, scaleY: 0.94, duration: 0.24, ease: 'power2.in' });
       gsap.to(this.rotators.wing_right, { rotation: -14, scaleX: 0.75, scaleY: 0.94, duration: 0.24, ease: 'power2.in' });
 
@@ -402,8 +422,8 @@ export class WitchAssistant {
       this._scheduleTimer(() => {
         // Body lifts into a floating hover
         const bodyHover = gsap.fromTo(this.rootGroup,
-          { y: -12, scaleY: 1.02, scaleX: 0.98 },
-          { y: -18, scaleY: 0.99, scaleX: 1.01, duration: 0.42, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+          { y: -14, scaleY: 1.02, scaleX: 0.98 },
+          { y: -20, scaleY: 0.99, scaleX: 1.01, duration: 0.42, ease: 'sine.inOut', yoyo: true, repeat: -1 }
         );
 
         // Torso straightens with focus
@@ -413,6 +433,11 @@ export class WitchAssistant {
         const headFocus = gsap.fromTo(this.rotators.head,
           { rotation: -4, y: -2 },
           { rotation: -1, y: 0, duration: 0.35, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+        );
+
+        const hatMagic = gsap.fromTo(this.rotators.hat,
+          { rotation: -3 },
+          { rotation: 3, duration: 0.28, ease: 'sine.inOut', yoyo: true, repeat: -1 }
         );
 
         // Wings flutter with high excitement and 3D folding while hovering
@@ -437,15 +462,15 @@ export class WitchAssistant {
 
         // Hands weave spells in complementary circular arcs
         const waveL = gsap.fromTo(this.rotators.arm_left,
-          { rotation: 18, y: -4 },
-          { rotation: 38, y: 4, duration: 0.17, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+          { rotation: 20, y: -4 },
+          { rotation: 40, y: 4, duration: 0.17, ease: 'sine.inOut', yoyo: true, repeat: -1 }
         );
         const waveR = gsap.fromTo(this.rotators.arm_right,
-          { rotation: -18, y: 4 },
-          { rotation: -38, y: -4, duration: 0.17, ease: 'sine.inOut', yoyo: true, repeat: -1 }
+          { rotation: -20, y: 4 },
+          { rotation: -40, y: -4, duration: 0.17, ease: 'sine.inOut', yoyo: true, repeat: -1 }
         );
 
-        this.activeTweens.push(bodyHover, torsoFocus, headFocus, wingL, wingR, tailLash, legL, legR, waveL, waveR);
+        this.activeTweens.push(bodyHover, torsoFocus, headFocus, hatMagic, wingL, wingR, tailLash, legL, legR, waveL, waveR);
 
         // Magic sparkles radiate
         this._emitSparkles(duration - 0.24);
@@ -475,9 +500,9 @@ export class WitchAssistant {
           stroke: '#ffffff',
           'stroke-width': '1.5',
         });
-        // In local SVG space, the witch's hands are at X ~ 160, Y ~ 480
-        const spawnX = 160 + (Math.random() * 50 - 25);
-        const spawnY = 475 + (Math.random() * 50 - 25);
+        // In local SVG space (1013x1382), witch's forward-reaching hands are at X ~ 180, Y ~ 640
+        const spawnX = 180 + (Math.random() * 60 - 30);
+        const spawnY = 640 + (Math.random() * 60 - 30);
         star.setAttribute('transform', `translate(${spawnX} ${spawnY}) scale(0)`);
         this.fxGroup.append(star);
 
@@ -508,8 +533,9 @@ export class WitchAssistant {
         stroke: '#ffffff',
         'stroke-width': '1.5',
       });
-      const spawnX = 365 + (Math.random() * 200 - 100);
-      const spawnY = 400 + (Math.random() * 80 - 40);
+      // Around chest center (504, 600)
+      const spawnX = 504 + (Math.random() * 240 - 120);
+      const spawnY = 600 + (Math.random() * 100 - 50);
       star.setAttribute('transform', `translate(${spawnX} ${spawnY}) scale(0)`);
       this.fxGroup.append(star);
 
@@ -546,12 +572,13 @@ export class WitchAssistant {
         ease: 'power2.in',
         onComplete: () => {
           // 2. Ta-da! Explosive upward hop
-          gsap.to(this.rotators.arm_left, { rotation: 72, y: -6, duration: 0.22, ease: 'back.out(2)' });
-          gsap.to(this.rotators.arm_right, { rotation: -72, y: -6, duration: 0.22, ease: 'back.out(2)' });
+          gsap.to(this.rotators.arm_left, { rotation: 35, y: -6, duration: 0.22, ease: 'back.out(2)' });
+          gsap.to(this.rotators.arm_right, { rotation: -35, y: -6, duration: 0.22, ease: 'back.out(2)' });
           gsap.to(this.rotators.wing_left, { rotation: 28, scaleX: 1.15, scaleY: 1.05, duration: 0.22, ease: 'back.out(1.7)' });
           gsap.to(this.rotators.wing_right, { rotation: -28, scaleX: 1.15, scaleY: 1.05, duration: 0.22, ease: 'back.out(1.7)' });
           gsap.to(this.rotators.tail, { rotation: -22, duration: 0.22, ease: 'power2.out' });
           gsap.to(this.rotators.head, { rotation: -5, y: -3, duration: 0.22, ease: 'power2.out' });
+          gsap.to(this.rotators.hat, { rotation: 8, duration: 0.20, ease: 'power2.out' });
 
           // Burst celebration sparks
           this._emitCelebrationSparkles();

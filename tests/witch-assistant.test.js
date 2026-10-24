@@ -59,7 +59,7 @@ class MockElement {
 
 test('witch assistant sprite assets exist with non-zero sizes', () => {
   const parts = Object.keys(WITCH_PARTS_METADATA);
-  assert.equal(parts.length, 9);
+  assert.equal(parts.length, 10);
 
   for (const part of parts) {
     const filename = `${part}.png`;
@@ -69,8 +69,8 @@ test('witch assistant sprite assets exist with non-zero sizes', () => {
     assert.ok(stat.size > 500, `Asset file ${filename} must have content, size: ${stat.size}`);
   }
 
-  assert.equal(WITCH_BASE_VIEWBOX.width, 731);
-  assert.equal(WITCH_BASE_VIEWBOX.height, 1024);
+  assert.equal(WITCH_BASE_VIEWBOX.width, 1013);
+  assert.equal(WITCH_BASE_VIEWBOX.height, 1382);
 });
 
 test('witch assistant builds expected DOM joint hierarchy', () => {
@@ -82,15 +82,15 @@ test('witch assistant builds expected DOM joint hierarchy', () => {
 
   try {
     const container = new MockElement('div');
-    const witch = new WitchAssistant(container, { scale: 0.26, walkSpeed: 400 });
+    const witch = new WitchAssistant(container, { scale: 0.20, walkSpeed: 400 });
 
     assert.ok(witch.element, 'witch element exists');
     assert.ok(witch.svg, 'witch svg exists');
-    assert.equal(witch.svg.getAttribute('viewBox'), '0 0 731 1024');
+    assert.equal(witch.svg.getAttribute('viewBox'), '0 0 1013 1382');
 
     const expectedJoints = [
       'wing_left', 'wing_right', 'tail', 'leg_left',
-      'leg_right', 'torso', 'head', 'arm_left', 'arm_right'
+      'leg_right', 'torso', 'head', 'hat', 'arm_left', 'arm_right'
     ];
     for (const jointKey of expectedJoints) {
       assert.ok(witch.joints[jointKey], `joint-${jointKey} exists`);
