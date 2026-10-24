@@ -15,7 +15,7 @@ import {
 
 export { COCOA_HANDS_STAGE_CONFIG, COCOA_HANDS_WIDTHS };
 
-export const BLANKET_WIDTHS = Object.freeze([116, 136, 196, 236]);
+export const BLANKET_WIDTHS = Object.freeze([116, 150, 196, 236]);
 
 export const BLANKET_STAGE_CONFIG = Object.freeze({
   1: Object.freeze({ width: 116, height: 101.7, x: 50.39, y: 82 }),

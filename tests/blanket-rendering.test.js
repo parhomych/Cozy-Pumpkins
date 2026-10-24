@@ -43,7 +43,7 @@ test('blanket artwork renders at every stage with stage-relative dimensions', as
     const { createPumpkinSvg, BLANKET_WIDTHS, BLANKET_STAGE_CONFIG } = await import(
       '../public/js/shared/pumpkin-svg.js'
     );
-    const expectedWidths = [116, 136, 196, 236];
+    const expectedWidths = [116, 150, 196, 236];
     assert.deepEqual(BLANKET_WIDTHS, expectedWidths);
 
     for (const stage of [1, 2, 3, 4]) {
@@ -76,7 +76,7 @@ test('blanket artwork renders at every stage with stage-relative dimensions', as
         assert.ok(expectedConfig.width < 140, 'stage 1 blanket should be compact for baby pumpkin');
         assert.ok(expectedConfig.y >= 75, 'stage 1 blanket y should sit lower around the pot rim');
       } else if (stage === 2) {
-        assert.ok(expectedConfig.width >= 130 && expectedConfig.width <= 145, 'stage 2 blanket width should envelop the sprout pumpkin body compactly');
+        assert.ok(expectedConfig.width >= 130 && expectedConfig.width <= 160, 'stage 2 blanket width should envelop the sprout pumpkin body compactly');
         assert.ok(expectedConfig.y >= 150, 'stage 2 blanket y should place blanket naturally below the mouth');
       } else if (stage === 4) {
         assert.ok(expectedConfig.width >= 230, 'stage 4 blanket should wrap giant pumpkin body with extra width');
