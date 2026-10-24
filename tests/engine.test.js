@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DonationService } from '../src/engine/donations.js';
 import { RewardService } from '../src/engine/rewards.js';
-import { customizationCatalog, customizationValues, parseCustomization } from '../src/engine/customization-parser.js';
+import { customizationCatalog, customizationValues, parseCustomization, sanitizeCustomization } from '../src/engine/customization-parser.js';
 import { clampPosition, dimensionsFor, isPositionValid } from '../src/engine/spatial-rules.js';
 import { testConfig, testDatabase } from './helpers.js';
 import { Database } from '../src/db/database.js';
@@ -72,7 +72,23 @@ test('customization catalog exposes canonical values and aliases for supported s
     assert.ok(group.values.every(({ value, keywords }) => keywords.includes(value)));
   }
   assert.deepEqual(catalog.find(({ slot }) => slot === 'hat').values, []);
-  assert.deepEqual(catalog.find(({ slot }) => slot === 'prop').values, []);
+  assert.deepEqual(catalog.find(({ slot }) => slot === 'prop').values, [{
+    value: 'cocoa_hands',
+    keywords: ['cocoa_hands', 'cocoa hands', 'cocoa', 'какао', 'руки с какао'],
+  }]);
+});
+
+test('donation customization recognizes cocoa-hands aliases and sanitation preserves supported choices', () => {
+  for (const alias of ['cocoa_hands', 'cocoa hands', 'cocoa', 'какао', 'руки с какао']) {
+    const parsed = parseCustomization(`!тыковка ${alias}`);
+    assert.equal(parsed.recognized, true, `${alias} should be recognized`);
+    assert.equal(parsed.customization.prop, 'cocoa_hands');
+  }
+  assert.deepEqual(
+    sanitizeCustomization({ prop: 'cocoa_hands' }, { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'none' }),
+    { skin: 'ghost', eyes: 'stars', mouth: 'o', hat: 'witch', prop: 'cocoa_hands' },
+  );
+  assert.equal(sanitizeCustomization({ prop: 'unknown' }).prop, 'none');
 });
 
 test('OAuth authorization URLs use the server API callback routes', () => {

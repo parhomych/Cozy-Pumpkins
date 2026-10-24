@@ -204,7 +204,7 @@ function renderCustomizationCatalog(catalog = []) {
 function populateFaceChoices(catalog = []) {
   if (!Array.isArray(catalog)) return;
   for (const group of catalog) {
-    if ((group?.slot !== 'eyes' && group?.slot !== 'mouth') || !Array.isArray(group.values)) continue;
+    if ((group?.slot !== 'eyes' && group?.slot !== 'mouth' && group?.slot !== 'prop') || !Array.isArray(group.values)) continue;
     const select = $(`[data-slot="${group.slot}"]`);
     if (!select) continue;
     const currentValue = select.value;

@@ -1,4 +1,4 @@
-import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=stage-ground-alignment-20261023';
+import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=cocoa-hands-stage-sizing-20261024';
 
 const getGsap = () => globalThis.gsap || globalThis.window?.gsap || null;
 const wait = (fn, ms) => setTimeout(fn, ms);
@@ -11,6 +11,7 @@ const REFERENCE_VIEWBOX = 1095;
 const DEFAULT_NAME_FONT_SIZE = 14;
 const REFERENCE_FACE_ORIGIN = '548 665';
 const REFERENCE_BODY_ORIGIN = '548 1035';
+const COCOA_HANDS_CUP_ORIGIN = '548 790';
 const STAGE_ONE_SPROUT_ORIGIN = '1400 635';
 const STAGE_ONE_LEFT_LEAF_ORIGIN = '1300 430';
 const STAGE_ONE_RIGHT_LEAF_ORIGIN = '1535 430';
@@ -90,6 +91,7 @@ export class PumpkinCharacter {
     this.faceMask = this.root.querySelector('.face-mask');
     this.face = this.root.querySelector('.face');
     this.eyes = this.root.querySelector('.eyes');
+    this.cocoaHandsMovingCenter = this.root.querySelector('.cocoa-hands-moving-center');
     const mouths = [...this.root.querySelectorAll('.mouth')];
     this.mouth = mouths[0] || null;
     // A customization rebuild must leave one live mouth overlay behind. If
@@ -480,6 +482,7 @@ export class PumpkinCharacter {
     this._scheduleStageOneCozy();
     this._scheduleStageTwoPlantSway();
     this._scheduleStemSway();
+    this._scheduleCocoaHandsSway();
     this._scheduleBlink();
     this._scheduleLook();
     this._scheduleFaceVariant();
@@ -588,6 +591,20 @@ export class PumpkinCharacter {
     ));
   }
 
+  _scheduleCocoaHandsSway() {
+    const gsap = this._gsap();
+    if (!gsap || !this.cocoaHandsMovingCenter) return;
+    const amplitude = randomBetween(1.2, 2);
+    this._trackIdle(gsap.fromTo(this.cocoaHandsMovingCenter,
+      { rotation: -amplitude, svgOrigin: COCOA_HANDS_CUP_ORIGIN },
+      {
+        rotation: amplitude, svgOrigin: COCOA_HANDS_CUP_ORIGIN,
+        duration: randomBetween(3.8, 4.8), ease: 'sine.inOut',
+        yoyo: true, repeat: -1, overwrite: 'auto',
+      },
+    ));
+  }
+
   _scheduleBlink() {
     // Use a long, per-pumpkin randomized delay so blinks feel incidental
     // instead of landing on a shared metronome. A small minority are double
@@ -630,6 +647,7 @@ export class PumpkinCharacter {
       gsap.set(this.bodyLook, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.rocker || this.body, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.stem, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.cocoaHandsMovingCenter) gsap.set(this.cocoaHandsMovingCenter, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       if (this.stageTwoPlant) gsap.set(this.stageTwoPlant, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       if (this.stageOneArt) gsap.set(this.stageOneArt, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       if (this.stageOneSprout) gsap.set(this.stageOneSprout, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
