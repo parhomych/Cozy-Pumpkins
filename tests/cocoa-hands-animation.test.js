@@ -1,52 +1,106 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { PumpkinCharacter } from '../public/js/shared/pumpkin-character.js';
+import {
+  COCOA_HANDS_PATHS_REST,
+  COCOA_SHOULDER_ANCHORS,
+  getBentCocoaPaths,
+} from '../public/js/shared/cocoa-hands-paths.js';
 
-test('cocoa sway animates only the movable artwork smoothly and repeats without a jump', () => {
-  const movingCenter = { id: 'moving-center' };
-  const fixedShoulders = { id: 'fixed-shoulders' };
-  let call;
+class FakePathElement {
+  constructor(index, d) {
+    this.index = index;
+    this.attrs = { d };
+  }
+  setAttribute(name, val) {
+    this.attrs[name] = String(val);
+  }
+  getAttribute(name) {
+    return this.attrs[name];
+  }
+}
+
+test('cocoa sway bends arm paths smoothly via gsap while keeping shoulder anchors fixed at the pumpkin', () => {
+  const mockPaths = COCOA_HANDS_PATHS_REST.map((d, i) => new FakePathElement(i, d));
+  let timelineVars = null;
+  const fromToCalls = [];
   const tween = { killed: false, kill() { this.killed = true; } };
+
   const character = Object.create(PumpkinCharacter.prototype);
-  character.cocoaHandsMovingCenter = movingCenter;
-  character.cocoaHandsFixedShoulders = fixedShoulders;
-  character._gsap = () => ({
-    fromTo(target, from, to) {
-      call = { target, from, to };
-      return tween;
-    },
-  });
+  character.cocoaHandsPaths = mockPaths;
   character.idleTweens = new Set();
   character.tweens = new Set();
+  character._gsap = () => ({
+    timeline(vars) {
+      timelineVars = vars;
+      const tl = {
+        fromTo(target, from, to, pos) {
+          fromToCalls.push({ target, from, to, pos });
+          return tl;
+        },
+        kill() { tween.kill(); },
+      };
+      return tl;
+    },
+  });
 
   character._scheduleCocoaHandsSway();
 
-  assert.equal(call.target, movingCenter);
-  assert.notEqual(call.target, fixedShoulders);
-  assert.equal(call.from.rotation, -call.to.rotation);
-  assert.ok(call.to.rotation >= 1 && call.to.rotation <= 2.5);
-  assert.ok(call.to.duration >= 3 && call.to.duration <= 5);
-  assert.equal(call.to.ease, 'sine.inOut');
-  assert.equal(call.to.yoyo, true);
-  assert.equal(call.to.repeat, -1);
-  assert.equal(character.idleTweens.has(tween), true);
-  assert.equal(character.tweens.has(tween), true);
+  assert.ok(timelineVars, 'should create a GSAP timeline');
+  assert.equal(timelineVars.repeat, -1);
+  assert.equal(timelineVars.yoyo, true);
+  assert.equal(fromToCalls.length, 12, 'should animate all 12 cocoa paths');
+  assert.equal(fromToCalls[0].target, mockPaths[0]);
+  assert.equal(fromToCalls[0].to.ease, 'sine.inOut');
+  assert.ok(fromToCalls[0].to.duration >= 3.5 && fromToCalls[0].to.duration <= 5);
+
+  // Verify shoulder coordinates are strictly anchored and do not move
+  fromToCalls.forEach(({ from, to }, idx) => {
+    const restD = COCOA_HANDS_PATHS_REST[idx];
+    const fromD = from.attr.d;
+    const toD = to.attr.d;
+
+    const restPoints = [...restD.matchAll(/([0-9.-]+)\s+([0-9.-]+)/g)].map((m) => [parseFloat(m[1]), parseFloat(m[2]), m[1], m[2]]);
+    const fromPoints = [...fromD.matchAll(/([0-9.-]+)\s+([0-9.-]+)/g)].map((m) => [parseFloat(m[1]), parseFloat(m[2]), m[1], m[2]]);
+    const toPoints = [...toD.matchAll(/([0-9.-]+)\s+([0-9.-]+)/g)].map((m) => [parseFloat(m[1]), parseFloat(m[2]), m[1], m[2]]);
+
+    let armBendingDetected = false;
+    for (let i = 0; i < restPoints.length; i++) {
+      const [rx, ry, rsx, rsy] = restPoints[i];
+      if (rx <= COCOA_SHOULDER_ANCHORS.left || rx >= COCOA_SHOULDER_ANCHORS.right) {
+        assert.equal(fromPoints[i][2], rsx, `path ${idx} shoulder x must remain anchored in from pose`);
+        assert.equal(fromPoints[i][3], rsy, `path ${idx} shoulder y must remain anchored in from pose`);
+        assert.equal(toPoints[i][2], rsx, `path ${idx} shoulder x must remain anchored in to pose`);
+        assert.equal(toPoints[i][3], rsy, `path ${idx} shoulder y must remain anchored in to pose`);
+      } else {
+        if (fromPoints[i][2] !== toPoints[i][2] || fromPoints[i][3] !== toPoints[i][3]) {
+          armBendingDetected = true;
+        }
+      }
+    }
+    assert.ok(armBendingDetected, `path ${idx} should bend along inner arm / cup`);
+  });
+
+  assert.equal(character.idleTweens.size, 1);
+  assert.equal(character.tweens.size, 1);
 });
 
 test('stopping idle kills and resets the cocoa sway without moving shoulder anchors', () => {
-  const movingCenter = { id: 'moving-center' };
-  const fixedShoulders = { id: 'fixed-shoulders' };
-  const calls = [];
+  const mockPaths = COCOA_HANDS_PATHS_REST.map((d, i) => new FakePathElement(i, d));
   const tween = { killed: false, kill() { this.killed = true; } };
+  const setCalls = [];
+
   const character = Object.create(PumpkinCharacter.prototype);
   Object.assign(character, {
     idleTimers: new Set(),
     idleTweens: new Set([tween]),
     idleStarted: true,
-    cocoaHandsMovingCenter: movingCenter,
-    cocoaHandsFixedShoulders: fixedShoulders,
+    cocoaHandsPaths: mockPaths,
+    cocoaHandsMovingCenter: null,
     root: { querySelectorAll: () => [] },
-    _gsap: () => ({ set: (target, values) => calls.push({ target, values }) }),
+    _gsap: () => ({
+      set: (target, values) => setCalls.push({ target, values }),
+    }),
   });
 
   character.stopIdle();
@@ -54,15 +108,18 @@ test('stopping idle kills and resets the cocoa sway without moving shoulder anch
   assert.equal(tween.killed, true);
   assert.equal(character.idleTweens.size, 0);
   assert.equal(character.idleStarted, false);
-  assert.ok(calls.some(({ target, values }) => target === movingCenter && values.rotation === 0));
-  assert.equal(calls.some(({ target }) => target === fixedShoulders), false);
+
+  mockPaths.forEach((pathEl, idx) => {
+    const call = setCalls.find((c) => c.target === pathEl);
+    assert.ok(call, `path ${idx} should be reset in stopIdle`);
+    assert.equal(call.values.attr.d, COCOA_HANDS_PATHS_REST[idx]);
+  });
 });
 
 test('removing a pumpkin stops its cocoa idle animation', () => {
-  const movingCenter = { id: 'moving-center' };
+  const mockPaths = COCOA_HANDS_PATHS_REST.map((d, i) => new FakePathElement(i, d));
   const tween = { killed: false, kill() { this.killed = true; } };
   let removed = false;
-  const calls = [];
   const character = Object.create(PumpkinCharacter.prototype);
   Object.assign(character, {
     destroyed: false,
@@ -71,14 +128,14 @@ test('removing a pumpkin stops its cocoa idle animation', () => {
     tweens: new Set([tween]),
     actionTweens: new Set(),
     idleStarted: true,
-    cocoaHandsMovingCenter: movingCenter,
+    cocoaHandsPaths: mockPaths,
     root: {
       querySelectorAll: () => [],
       remove: () => { removed = true; },
     },
     stopAction() {},
     _gsap: () => ({
-      set: (target, values) => calls.push({ target, values }),
+      set() {},
       killTweensOf() {},
     }),
   });
@@ -87,6 +144,5 @@ test('removing a pumpkin stops its cocoa idle animation', () => {
 
   assert.equal(tween.killed, true);
   assert.equal(character.idleStarted, false);
-  assert.ok(calls.some(({ target, values }) => target === movingCenter && values.rotation === 0));
   assert.equal(removed, true);
 });

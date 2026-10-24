@@ -30,32 +30,42 @@ test('cocoa-hands artwork renders at every stage with stage-relative dimensions'
   delete globalThis.fetch;
 
   try {
-    const { createPumpkinSvg } = await import('../public/js/shared/pumpkin-svg.js');
+    const { createPumpkinSvg, COCOA_HANDS_WIDTHS, COCOA_HANDS_STAGE_CONFIG } = await import('../public/js/shared/pumpkin-svg.js');
+    const expectedWidths = [96, 120, 145, 162];
+    assert.deepEqual(COCOA_HANDS_WIDTHS, expectedWidths);
+
     for (const stage of [1, 2, 3, 4]) {
       const svg = createPumpkinSvg({ id: `cocoa-${stage}`, stage, customization: { prop: 'cocoa_hands' } });
       const nodes = descendants(svg);
-      const fixed = nodes.find((element) => element.attributes.get('class') === 'cocoa-hands-fixed-shoulders');
-      const moving = nodes.find((element) => element.attributes.get('class') === 'cocoa-hands-moving-center');
+      const artwork = nodes.find((element) => element.attributes.get('class')?.includes('cocoa-hands-artwork'));
+      assert.ok(artwork, `stage ${stage} should render cocoa-hands artwork`);
 
-      assert.ok(fixed, `stage ${stage} should render fixed shoulder artwork`);
-      assert.ok(moving, `stage ${stage} should render moving center artwork`);
-      assert.ok(nodes.some((element) => element.attributes.get('href') === '/assets/cocoa-hands.svg#cocoa-shoulders-fixed'));
-      assert.ok(nodes.some((element) => element.attributes.get('href') === '/assets/cocoa-hands.svg#cocoa-center-moving'));
-      const artwork = nodes.find((element) => element.attributes.get('class') === 'cocoa-hands-artwork');
-      assert.equal(Number(artwork.attributes.get('width')), [100, 120, 145, 145][stage - 1]);
-      assert.equal(artwork.attributes.get('height'), String(Number(artwork.attributes.get('width')) * 534 / 991));
+      const expectedWidth = expectedWidths[stage - 1];
+      const expectedHeight = Math.round(expectedWidth * 534 / 991 * 100) / 100;
+      assert.equal(Number(artwork.attributes.get('width')), expectedWidth);
+      assert.equal(Number(artwork.attributes.get('height')), expectedHeight);
+
+      const y = Number(artwork.attributes.get('y'));
+      const expectedConfig = COCOA_HANDS_STAGE_CONFIG[stage];
+      assert.equal(y, expectedConfig.y, `stage ${stage} should match config y`);
+      if (stage === 2) {
+        assert.ok(y > 150, `stage 2 artwork y (${y}) should place cocoa hands on lower pumpkin body`);
+      } else if (stage === 1) {
+        assert.ok(y < 120, `stage 1 artwork y (${y}) should fit baby pumpkin body`);
+      }
+
+      const paths = nodes.filter((element) => element.attributes.get('class')?.includes('cocoa-hands-path'));
+      assert.equal(paths.length, 12, `stage ${stage} should render all 12 cocoa-hands paths`);
+      assert.equal(artwork.attributes.get('data-shoulder-left'), '140');
+      assert.equal(artwork.attributes.get('data-shoulder-right'), '850');
     }
 
     const defaultAppearance = createPumpkinSvg({ id: 'plain-3', stage: 3 });
     assert.equal(descendants(defaultAppearance).some((element) => String(element.attributes.get('class') || '').includes('cocoa-hands-')), false);
 
     const source = await readFile(new URL('../public/assets/cocoa-hands.svg', import.meta.url), 'utf8');
-    assert.match(source, /id="cocoa-artwork-source"/u);
-    assert.match(source, /id="cocoa-shoulder-left"[^>]+mask="url\(#cocoa-left-shoulder-mask\)"/u);
-    assert.match(source, /id="cocoa-shoulder-right"[^>]+mask="url\(#cocoa-right-shoulder-mask\)"/u);
-    assert.match(source, /id="cocoa-center-moving"[^>]+mask="url\(#cocoa-center-mask\)"/u);
-    assert.match(source, /id="cocoa-center-transition"[\s\S]*?stop-color="#000000"[\s\S]*?stop-color="#ffffff"/u);
-    assert.equal((source.match(/href="#cocoa-artwork-source"/gu) || []).length, 3);
+    assert.match(source, /id="cocoa-hands-artwork"/u);
+    assert.match(source, /class="cocoa-hands-path/u);
 
     const admin = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
     const overlay = await readFile(new URL('../public/js/overlay-app.js', import.meta.url), 'utf8');

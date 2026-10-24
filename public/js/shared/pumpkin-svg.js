@@ -4,6 +4,14 @@ const STAGE_ONE_URL = '/assets/pumpkin-stage-1.svg';
 const STAGE_TWO_URL = '/assets/pumpkin-stage-2.svg';
 const STAGE_FOUR_URL = '/assets/pumpkin-stage-4.svg';
 const COCOA_HANDS_URL = '/assets/cocoa-hands.svg';
+
+import {
+  COCOA_HANDS_PATHS,
+  COCOA_HANDS_STAGE_CONFIG,
+  COCOA_HANDS_WIDTHS,
+} from './cocoa-hands-paths.js?v=cocoa-hands-bend-20261024';
+
+export { COCOA_HANDS_STAGE_CONFIG, COCOA_HANDS_WIDTHS };
 const REFERENCE_VIEWBOX = 1095;
 const STAGE_ONE_VIEWBOX = Object.freeze({ x: 850, y: 80, width: 1100, height: 1380 });
 export const REFERENCE_DISPLAY_SIZE = 220;
@@ -468,20 +476,35 @@ export function createPumpkinSvg(pumpkin = {}) {
   else if (customization.prop === 'spider') accessory.append(node('circle', { cx: '51', cy: '196', r: '10', fill: '#24182a' }), path('M43 190 l-17 -12 M43 197 l-20 2 M43 204 l-16 13 M59 190 l17 -12 M59 197 l20 2 M59 204 l16 13', { stroke: '#24182a', 'stroke-width': '3' }));
   else if (customization.prop === 'candle') accessory.append(node('rect', { x: '102', y: '42', width: '16', height: '33', rx: '5', fill: '#f1d49b', stroke: '#7d4c29', 'stroke-width': '3' }));
   else if (customization.prop === 'cocoa_hands') {
-    const width = [100, 120, 145, 145][stage - 1];
-    const height = width * 534 / 991;
-    const x = (REFERENCE_DISPLAY_SIZE - width) / 2;
-    const y = (155.885 - height / 2);
-    const cocoaLayer = (className, artworkId) => group(className, [
-      node('svg', {
-        class: 'cocoa-hands-artwork', x: String(x), y: String(y), width: String(width), height: String(height),
-        viewBox: '0 0 991 534', preserveAspectRatio: 'none', 'aria-hidden': 'true',
-      }, [node('use', { href: `${COCOA_HANDS_URL}#${artworkId}` })]),
-    ]);
-    accessory.append(
-      cocoaLayer('cocoa-hands-fixed-shoulders', 'cocoa-shoulders-fixed'),
-      cocoaLayer('cocoa-hands-moving-center', 'cocoa-center-moving'),
-    );
+    const config = COCOA_HANDS_STAGE_CONFIG[stage] || COCOA_HANDS_STAGE_CONFIG[3];
+    const { width, height, x, y } = config;
+    const container = group('cocoa-hands-container cocoa-hands-fixed-shoulders', []);
+    const cocoaSvg = node('svg', {
+      class: 'cocoa-hands-artwork cocoa-hands-moving-center',
+      x: String(x),
+      y: String(y),
+      width: String(width),
+      height: String(height),
+      viewBox: '0 0 991 534',
+      preserveAspectRatio: 'none',
+      'aria-hidden': 'true',
+      'data-shoulder-left': '140',
+      'data-shoulder-right': '850',
+    });
+    for (let i = 0; i < COCOA_HANDS_PATHS.length; i++) {
+      const p = COCOA_HANDS_PATHS[i];
+      cocoaSvg.append(node('path', {
+        class: `cocoa-hands-path cocoa-hands-path-${i}`,
+        d: p.d,
+        fill: p.fill,
+        'fill-rule': p.fillRule || 'evenodd',
+        stroke: p.stroke || p.fill,
+        'stroke-width': p.strokeWidth || '0.25',
+        'stroke-linejoin': p.strokeLinejoin || 'round',
+      }));
+    }
+    container.append(cocoaSvg);
+    accessory.append(container);
   }
 
   if (stage === 2) rocker.append(faceAnchor, hat, accessory);

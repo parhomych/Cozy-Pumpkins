@@ -1,4 +1,5 @@
-import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=cocoa-hands-stage-sizing-20261024';
+import { createPumpkinSvg, normalizeCustomization, normalizeGrowthMultipliers, REFERENCE_DISPLAY_SIZE, STAGE_SCALES } from './pumpkin-svg.js?v=cocoa-hands-bend-20261024';
+import { COCOA_HANDS_PATHS_REST, getBentCocoaPaths } from './cocoa-hands-paths.js?v=cocoa-hands-bend-20261024';
 
 const getGsap = () => globalThis.gsap || globalThis.window?.gsap || null;
 const wait = (fn, ms) => setTimeout(fn, ms);
@@ -91,7 +92,10 @@ export class PumpkinCharacter {
     this.faceMask = this.root.querySelector('.face-mask');
     this.face = this.root.querySelector('.face');
     this.eyes = this.root.querySelector('.eyes');
-    this.cocoaHandsMovingCenter = this.root.querySelector('.cocoa-hands-moving-center');
+    this.cocoaHandsArtwork = this.root.querySelector('.cocoa-hands-artwork');
+    this.cocoaHandsPaths = [...this.root.querySelectorAll('.cocoa-hands-path')];
+    this.cocoaHandsMovingCenter = this.root.querySelector('.cocoa-hands-moving-center') || this.cocoaHandsArtwork;
+    this.cocoaHandsFixedShoulders = this.root.querySelector('.cocoa-hands-fixed-shoulders') || this.cocoaHandsArtwork;
     const mouths = [...this.root.querySelectorAll('.mouth')];
     this.mouth = mouths[0] || null;
     // A customization rebuild must leave one live mouth overlay behind. If
@@ -593,16 +597,50 @@ export class PumpkinCharacter {
 
   _scheduleCocoaHandsSway() {
     const gsap = this._gsap();
-    if (!gsap || !this.cocoaHandsMovingCenter) return;
-    const amplitude = randomBetween(1.2, 2);
-    this._trackIdle(gsap.fromTo(this.cocoaHandsMovingCenter,
-      { rotation: -amplitude, svgOrigin: COCOA_HANDS_CUP_ORIGIN },
-      {
-        rotation: amplitude, svgOrigin: COCOA_HANDS_CUP_ORIGIN,
-        duration: randomBetween(3.8, 4.8), ease: 'sine.inOut',
-        yoyo: true, repeat: -1, overwrite: 'auto',
-      },
-    ));
+    if (!gsap) return;
+    const paths = (this.cocoaHandsPaths && this.cocoaHandsPaths.length)
+      ? this.cocoaHandsPaths
+      : (this.root?.querySelectorAll ? [...this.root.querySelectorAll('.cocoa-hands-path')] : []);
+
+    if (paths.length) {
+      const amplitude = randomBetween(1.2, 2);
+      const pathsLeft = getBentCocoaPaths(-amplitude);
+      const pathsRight = getBentCocoaPaths(amplitude);
+      const duration = randomBetween(3.8, 4.8);
+
+      if (typeof gsap.timeline === 'function') {
+        const timeline = gsap.timeline({
+          repeat: -1,
+          yoyo: true,
+          overwrite: 'auto',
+        });
+        paths.forEach((pathEl, index) => {
+          timeline.fromTo(pathEl,
+            { attr: { d: pathsLeft[index] } },
+            { attr: { d: pathsRight[index] }, duration, ease: 'sine.inOut' },
+            0,
+          );
+        });
+        this._trackIdle(timeline);
+      } else if (typeof gsap.fromTo === 'function') {
+        paths.forEach((pathEl, index) => {
+          this._trackIdle(gsap.fromTo(pathEl,
+            { attr: { d: pathsLeft[index] } },
+            { attr: { d: pathsRight[index] }, duration, ease: 'sine.inOut', yoyo: true, repeat: -1, overwrite: 'auto' },
+          ));
+        });
+      }
+    } else if (this.cocoaHandsMovingCenter) {
+      const amplitude = randomBetween(1.2, 2);
+      this._trackIdle(gsap.fromTo(this.cocoaHandsMovingCenter,
+        { rotation: -amplitude, svgOrigin: COCOA_HANDS_CUP_ORIGIN },
+        {
+          rotation: amplitude, svgOrigin: COCOA_HANDS_CUP_ORIGIN,
+          duration: randomBetween(3.8, 4.8), ease: 'sine.inOut',
+          yoyo: true, repeat: -1, overwrite: 'auto',
+        },
+      ));
+    }
   }
 
   _scheduleBlink() {
@@ -647,6 +685,13 @@ export class PumpkinCharacter {
       gsap.set(this.bodyLook, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.rocker || this.body, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       gsap.set(this.stem, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      if (this.cocoaHandsPaths?.length) {
+        this.cocoaHandsPaths.forEach((pathEl, index) => {
+          if (COCOA_HANDS_PATHS_REST[index]) {
+            gsap.set(pathEl, { attr: { d: COCOA_HANDS_PATHS_REST[index] } });
+          }
+        });
+      }
       if (this.cocoaHandsMovingCenter) gsap.set(this.cocoaHandsMovingCenter, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       if (this.stageTwoPlant) gsap.set(this.stageTwoPlant, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
       if (this.stageOneArt) gsap.set(this.stageOneArt, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
