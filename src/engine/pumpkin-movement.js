@@ -52,9 +52,55 @@ export function findRoamingTarget(pumpkin, pumpkins, context, {
   return { x, y: groundY };
 }
 
+export function findJoinedStackRoamingTarget(stack, pumpkins, context, {
+  random = Math.random,
+  maxAttempts = MAX_ATTEMPTS,
+  minDistance = DEFAULT_ROAMING_SETTINGS.roamingMinDistance,
+  maxDistance = DEFAULT_ROAMING_SETTINGS.roamingMaxDistance,
+} = {}) {
+  const members = [...(stack?.members || [])].sort((a, b) => a.level - b.level);
+  if (members.length < 2 || members.some((member, index) => member.level !== index) || !context?.scene) return null;
+  const byId = new Map(pumpkins.map((pumpkin) => [pumpkin.id, pumpkin]));
+  const memberIds = new Set(members.map((member) => member.id));
+  const membersWithPumpkins = members.map((member) => {
+    const pumpkin = byId.get(member.id);
+    return pumpkin ? { member, pumpkin: { ...pumpkin, x: member.x, y: member.y } } : null;
+  });
+  if (membersWithPumpkins.some((item) => !item)) return null;
+  const outsiders = pumpkins.filter((pumpkin) => !memberIds.has(pumpkin.id));
+  const baseX = members[0].x;
+  const sceneWidth = Number(context.scene.width) || 1920;
+  const minimumDistance = Math.max(MIN_DISTANCE, Math.min(sceneWidth, Number(minDistance) || MIN_DISTANCE));
+  const maximumDistance = Math.max(minimumDistance, Math.min(sceneWidth, Number(maxDistance) || DEFAULT_ROAMING_SETTINGS.roamingMaxDistance));
+  const isAvailable = (deltaX) => membersWithPumpkins.every(({ member, pumpkin }) => {
+    const x = member.x + deltaX;
+    return isPositionValid(pumpkin, x, member.y, context)
+      && outsiders.every((other) => Math.abs(x - other.x) >= MIN_DISTANCE);
+  });
+
+  const attempts = Math.max(0, Math.min(MAX_ATTEMPTS, Math.floor(maxAttempts)));
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const sample = Number(random());
+    if (!Number.isFinite(sample)) continue;
+    const deltaX = (Math.max(0, Math.min(1, sample)) * 2 - 1) * maximumDistance;
+    if (Math.abs(deltaX) >= minimumDistance && isAvailable(deltaX)) return { x: baseX + deltaX };
+  }
+
+  const candidates = [];
+  for (let x = Math.max(0, baseX - maximumDistance); x <= Math.min(context.scene.width, baseX + maximumDistance); x += MIN_DISTANCE) {
+    const deltaX = x - baseX;
+    if (Math.abs(deltaX) >= minimumDistance && isAvailable(deltaX)) candidates.push(x);
+  }
+  if (!candidates.length) return null;
+  const sample = Number(random());
+  const fraction = Number.isFinite(sample) ? Math.max(0, Math.min(0.999999, sample)) : 0;
+  return { x: candidates[Math.floor(fraction * candidates.length)] };
+}
+
 export function createPumpkinMovementScheduler({
   db,
   config,
+  joinedStackService = null,
   broadcast = () => {},
   random = Math.random,
   intervalMs = null,
@@ -83,9 +129,31 @@ export function createPumpkinMovementScheduler({
     const pumpkins = db.listPumpkins();
     if (!pumpkins.length || paused) return null;
     const context = { scene: config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
+    const stacks = db.listJoinedStacks();
+    const stackByMember = new Map();
+    for (const stack of stacks) {
+      for (const member of stack.members || []) stackByMember.set(member.id, stack);
+    }
     for (let offset = 0; offset < pumpkins.length; offset += 1) {
       const index = (cursor + offset) % pumpkins.length;
       const pumpkin = pumpkins[index];
+      const stack = stackByMember.get(pumpkin.id);
+      if (stack) {
+        const members = [...(stack.members || [])].sort((a, b) => a.level - b.level);
+        if (!joinedStackService || members[0]?.id !== pumpkin.id || members.some((member) => pausedPumpkins.has(member.id))) continue;
+        const target = findJoinedStackRoamingTarget(stack, pumpkins, context, {
+          random,
+          minDistance: settings.roamingMinDistance ?? DEFAULT_ROAMING_SETTINGS.roamingMinDistance,
+          maxDistance: settings.roamingMaxDistance ?? DEFAULT_ROAMING_SETTINGS.roamingMaxDistance,
+        });
+        if (!target) continue;
+        const movement = joinedStackService.move(stack.stackId, target.x);
+        if (!movement) continue;
+        cursor = (index + 1) % pumpkins.length;
+        const roamingSpeed = settings.roamingSpeed ?? DEFAULT_ROAMING_SETTINGS.roamingSpeed;
+        broadcast('pumpkin:stack-move', { ...movement, movementType: 'roam', roamingSpeed });
+        return movement;
+      }
       if (pausedPumpkins.has(pumpkin.id) || pumpkin.isAirborne || pumpkin.parentId) continue;
       const target = findRoamingTarget(pumpkin, pumpkins, context, {
         random,

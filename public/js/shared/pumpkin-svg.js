@@ -355,12 +355,6 @@ function addFaceOverlay(face, customization) {
         if (customization.eyes === 'stars') {
           leftEye.append(path('M386 523 l8 20 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z', { fill: '#fff8e4' }));
           rightEye.append(path('M654 523 l8 20 21 2-16 13 5 21-18-11-18 11 5-21-16-13 21-2Z', { fill: '#fff8e4' }));
-        } else if (customization.eyes === 'sly') {
-          leftEye.append(path('M348 535 L424 558', { stroke: '#fff8e4', 'stroke-width': '11', 'stroke-linecap': 'round' }));
-          rightEye.append(path('M616 558 L692 535', { stroke: '#fff8e4', 'stroke-width': '11', 'stroke-linecap': 'round' }));
-        } else if (customization.eyes === 'hypno') {
-          leftEye.append(path('M360 551 q26 -29 52 0 t52 0', { fill: 'none', stroke: '#fff8e4', 'stroke-width': '6' }));
-          rightEye.append(path('M628 551 q26 -29 52 0 t52 0', { fill: 'none', stroke: '#fff8e4', 'stroke-width': '6' }));
         } else {
           leftEye.append(node('circle', { class: 'eye-glint variant-eye-glint', cx: '374', cy: '538', r: '10', fill: '#fff8e4' }));
           rightEye.append(node('circle', { class: 'eye-glint variant-eye-glint', cx: '642', cy: '538', r: '10', fill: '#fff8e4' }));
@@ -399,8 +393,6 @@ function addFaceOverlay(face, customization) {
     mouth.append(path('M468 635 Q530 688 592 635 L582 700 Q530 730 478 700Z', { class: 'mouth-shape', fill: '#150a06' }), path('M495 658 l16 34 17-31 M565 661 l-17 31-16-34', { fill: '#fff8e4', stroke: '#fff8e4', 'stroke-width': '8' }));
   } else if (customization.mouth === 'o') {
     mouth.append(node('ellipse', { class: 'mouth-shape', cx: '530', cy: '665', rx: '35', ry: '46', fill: '#150a06' }));
-  } else if (customization.mouth === 'candy') {
-    mouth.append(path('M476 638 Q530 690 584 638', { class: 'mouth-shape', fill: 'none', stroke: '#150a06', 'stroke-width': '12', 'stroke-linecap': 'round' }), node('circle', { class: 'mouth-candy', cx: '530', cy: '676', r: '22', fill: '#f19b3d', stroke: '#fff8e4', 'stroke-width': '8' }));
   } else if (customization.mouth === 'jack') {
     mouth.append(path('M466 638 Q530 690 594 638 L582 700 558 684 530 708 502 684 478 700Z', { class: 'mouth-shape', fill: '#150a06' }));
   } else {

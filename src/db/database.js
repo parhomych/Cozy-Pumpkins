@@ -8,6 +8,8 @@ import { DEFAULT_TOWER_ANIMATION, sanitizeTowerAnimation } from '../engine/tower
 import { DEFAULT_PUMPKIN_NAME_FONT_SIZE, pumpkinNameFontSize } from '../engine/pumpkin-name-settings.js';
 import { DEFAULT_GROWTH_STAGES, validateGrowthStages } from '../engine/growth-stages.js';
 import { DEFAULT_ROAMING_SETTINGS } from '../engine/roaming-settings.js';
+import { DEFAULT_LANDING_PARTICLES, sanitizeLandingParticles, landingParticlesPatch } from '../engine/landing-particles.js';
+import { DEFAULT_NEIGHBOR_STACK_ANIMATION, neighborStackAnimationPatch, sanitizeNeighborStackAnimation } from '../engine/neighbor-stack-animation.js';
 
 const schemaPath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'schema.sql');
 const DEFAULT_ZONE = { enabled: false, x: 0, y: 0, width: 0, height: 0 };
@@ -48,7 +50,7 @@ export class Database {
       if (!settingsColumns.has('min_spawn_donation')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN min_spawn_donation REAL NOT NULL DEFAULT 0 CHECK(min_spawn_donation >= 0)');
       if (!settingsColumns.has('spawn_command')) this.sqlite.exec("ALTER TABLE settings ADD COLUMN spawn_command TEXT NOT NULL DEFAULT '!тыковка'");
       if (!settingsColumns.has('growth_thresholds_json')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN growth_thresholds_json TEXT');
-      if (!settingsColumns.has('growth_stages_json')) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN growth_stages_json TEXT NOT NULL DEFAULT '{"stage2":true,"stage3":true,"stage4":true}'`);
+      if (!settingsColumns.has('growth_stages_json')) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN growth_stages_json TEXT NOT NULL DEFAULT '{"stage2":true,"stage3":false,"stage4":true}'`);
       if (!settingsColumns.has('growth_multipliers_json')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN growth_multipliers_json TEXT');
       if (!settingsColumns.has('roaming_interval_seconds')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN roaming_interval_seconds REAL NOT NULL DEFAULT 5');
       if (!settingsColumns.has('roaming_speed')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN roaming_speed REAL NOT NULL DEFAULT 140');
@@ -57,6 +59,8 @@ export class Database {
       if (!settingsColumns.has('roaming_max_distance')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN roaming_max_distance REAL NOT NULL DEFAULT 240');
       if (!settingsColumns.has('show_pumpkin_names')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN show_pumpkin_names INTEGER NOT NULL DEFAULT 1 CHECK(show_pumpkin_names IN (0, 1))');
       if (!settingsColumns.has('pumpkin_name_font_size')) this.sqlite.exec('ALTER TABLE settings ADD COLUMN pumpkin_name_font_size INTEGER NOT NULL DEFAULT 14 CHECK(pumpkin_name_font_size BETWEEN 8 AND 48)');
+      if (!settingsColumns.has('landing_particles_json')) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN landing_particles_json TEXT NOT NULL DEFAULT '{"enabled":true,"count":16,"size":1,"spread":1,"duration":1.5}'`);
+      if (!settingsColumns.has('neighbor_stack_animation_json')) this.sqlite.exec(`ALTER TABLE settings ADD COLUMN neighbor_stack_animation_json TEXT NOT NULL DEFAULT '${JSON.stringify(DEFAULT_NEIGHBOR_STACK_ANIMATION)}'`);
 
       // Older uncommitted builds stored animation on each pumpkin. Preserve the
       // first valid value as the initial scene setting, then remove that column.
@@ -104,8 +108,8 @@ export class Database {
   getSettings(defaults = { scene: { groundY: 1080 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} }, thresholds: DEFAULT_GROWTH_THRESHOLDS, growthMultipliers: DEFAULT_GROWTH_MULTIPLIERS }) {
     const row = this.sqlite.prepare('SELECT * FROM settings WHERE id = 1').get();
     if (!row) {
-       const value = { groundY: defaults.scene.groundY, noGoZone: { ...DEFAULT_ZONE }, showPumpkinNames: true, pumpkinNameFontSize: DEFAULT_PUMPKIN_NAME_FONT_SIZE, pumpkinCurrency: defaults.pumpkinCurrency, rewardMapping: { ...defaults.twitch.rewardIds }, customizationRewardMode: 'single', minSpawnDonation: 0, spawnCommand: '!тыковка', ...DEFAULT_ROAMING_SETTINGS, growthThresholds: validateGrowthThresholds(defaults.thresholds || DEFAULT_GROWTH_THRESHOLDS), growthStages: { ...DEFAULT_GROWTH_STAGES }, growthMultipliers: validateGrowthMultipliers(defaults.growthMultipliers || DEFAULT_GROWTH_MULTIPLIERS), animation: sanitizeAnimation(this.legacyAnimation, defaults.animation || DEFAULT_ANIMATION), towerAnimation: sanitizeTowerAnimation(defaults.towerAnimation || DEFAULT_TOWER_ANIMATION) };
-       this.sqlite.prepare(`INSERT INTO settings (id, ground_y, ground_y_overridden, no_go_zone_json, show_pumpkin_names, pumpkin_name_font_size, pumpkin_currency, reward_mapping_json, min_spawn_donation, spawn_command, roaming_interval_seconds, roaming_speed, roaming_jump_height, roaming_min_distance, roaming_max_distance, growth_thresholds_json, growth_stages_json, growth_multipliers_json, animation_json, tower_animation_json, updated_at) VALUES (1, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(value.groundY, JSON.stringify(value.noGoZone), Number(value.showPumpkinNames), value.pumpkinNameFontSize, value.pumpkinCurrency, JSON.stringify(value.rewardMapping), value.minSpawnDonation, value.spawnCommand, value.roamingIntervalSeconds, value.roamingSpeed, value.roamingJumpHeight, value.roamingMinDistance, value.roamingMaxDistance, JSON.stringify(value.growthThresholds), JSON.stringify(value.growthStages), JSON.stringify(value.growthMultipliers), JSON.stringify(value.animation), JSON.stringify(value.towerAnimation), new Date().toISOString());
+       const value = { groundY: defaults.scene.groundY, noGoZone: { ...DEFAULT_ZONE }, showPumpkinNames: true, pumpkinNameFontSize: DEFAULT_PUMPKIN_NAME_FONT_SIZE, pumpkinCurrency: defaults.pumpkinCurrency, rewardMapping: { ...defaults.twitch.rewardIds }, customizationRewardMode: 'single', minSpawnDonation: 0, spawnCommand: '!тыковка', ...DEFAULT_ROAMING_SETTINGS, growthThresholds: validateGrowthThresholds(defaults.thresholds || DEFAULT_GROWTH_THRESHOLDS), growthStages: { ...DEFAULT_GROWTH_STAGES }, growthMultipliers: validateGrowthMultipliers(defaults.growthMultipliers || DEFAULT_GROWTH_MULTIPLIERS), animation: sanitizeAnimation(this.legacyAnimation, defaults.animation || DEFAULT_ANIMATION), towerAnimation: sanitizeTowerAnimation(defaults.towerAnimation || DEFAULT_TOWER_ANIMATION), neighborStackAnimation: sanitizeNeighborStackAnimation(defaults.neighborStackAnimation || DEFAULT_NEIGHBOR_STACK_ANIMATION), landingParticles: sanitizeLandingParticles(defaults.landingParticles || DEFAULT_LANDING_PARTICLES) };
+       this.sqlite.prepare(`INSERT INTO settings (id, ground_y, ground_y_overridden, no_go_zone_json, show_pumpkin_names, pumpkin_name_font_size, pumpkin_currency, reward_mapping_json, min_spawn_donation, spawn_command, roaming_interval_seconds, roaming_speed, roaming_jump_height, roaming_min_distance, roaming_max_distance, growth_thresholds_json, growth_stages_json, growth_multipliers_json, animation_json, tower_animation_json, neighbor_stack_animation_json, landing_particles_json, updated_at) VALUES (1, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(value.groundY, JSON.stringify(value.noGoZone), Number(value.showPumpkinNames), value.pumpkinNameFontSize, value.pumpkinCurrency, JSON.stringify(value.rewardMapping), value.minSpawnDonation, value.spawnCommand, value.roamingIntervalSeconds, value.roamingSpeed, value.roamingJumpHeight, value.roamingMinDistance, value.roamingMaxDistance, JSON.stringify(value.growthThresholds), JSON.stringify(value.growthStages), JSON.stringify(value.growthMultipliers), JSON.stringify(value.animation), JSON.stringify(value.towerAnimation), JSON.stringify(value.neighborStackAnimation), JSON.stringify(value.landingParticles), new Date().toISOString());
       return value;
     }
     const configuredGroundY = Number.isFinite(Number(defaults.scene?.groundY)) ? Number(defaults.scene.groundY) : row.ground_y;
@@ -123,7 +127,7 @@ export class Database {
     const growthMultipliers = storedGrowthMultipliers === null
       ? validateGrowthMultipliers(defaults.growthMultipliers || DEFAULT_GROWTH_MULTIPLIERS)
       : validateGrowthMultipliers(storedGrowthMultipliers);
-    return { groundY, noGoZone: parsed(row.no_go_zone_json, DEFAULT_ZONE), showPumpkinNames: Boolean(row.show_pumpkin_names), pumpkinNameFontSize: pumpkinNameFontSize(row.pumpkin_name_font_size) ?? DEFAULT_PUMPKIN_NAME_FONT_SIZE, pumpkinCurrency: row.pumpkin_currency, rewardMapping: parsed(row.reward_mapping_json, {}), customizationRewardMode: row.customization_reward_mode === 'all' ? 'all' : 'single', minSpawnDonation: row.min_spawn_donation, spawnCommand: row.spawn_command, roamingIntervalSeconds: row.roaming_interval_seconds, roamingSpeed: row.roaming_speed, roamingJumpHeight: row.roaming_jump_height, roamingMinDistance: row.roaming_min_distance, roamingMaxDistance: row.roaming_max_distance, growthThresholds, growthStages: validateGrowthStages(parsed(row.growth_stages_json, DEFAULT_GROWTH_STAGES)), growthMultipliers, animation: sanitizeAnimation(parsed(row.animation_json, DEFAULT_ANIMATION), defaults.animation || DEFAULT_ANIMATION), towerAnimation: sanitizeTowerAnimation(parsed(row.tower_animation_json, DEFAULT_TOWER_ANIMATION), defaults.towerAnimation || DEFAULT_TOWER_ANIMATION), updatedAt };
+    return { groundY, noGoZone: parsed(row.no_go_zone_json, DEFAULT_ZONE), showPumpkinNames: Boolean(row.show_pumpkin_names), pumpkinNameFontSize: pumpkinNameFontSize(row.pumpkin_name_font_size) ?? DEFAULT_PUMPKIN_NAME_FONT_SIZE, pumpkinCurrency: row.pumpkin_currency, rewardMapping: parsed(row.reward_mapping_json, {}), customizationRewardMode: row.customization_reward_mode === 'all' ? 'all' : 'single', minSpawnDonation: row.min_spawn_donation, spawnCommand: row.spawn_command, roamingIntervalSeconds: row.roaming_interval_seconds, roamingSpeed: row.roaming_speed, roamingJumpHeight: row.roaming_jump_height, roamingMinDistance: row.roaming_min_distance, roamingMaxDistance: row.roaming_max_distance, growthThresholds, growthStages: validateGrowthStages(parsed(row.growth_stages_json, DEFAULT_GROWTH_STAGES)), growthMultipliers, animation: sanitizeAnimation(parsed(row.animation_json, DEFAULT_ANIMATION), defaults.animation || DEFAULT_ANIMATION), towerAnimation: sanitizeTowerAnimation(parsed(row.tower_animation_json, DEFAULT_TOWER_ANIMATION), defaults.towerAnimation || DEFAULT_TOWER_ANIMATION), neighborStackAnimation: sanitizeNeighborStackAnimation(parsed(row.neighbor_stack_animation_json, DEFAULT_NEIGHBOR_STACK_ANIMATION), defaults.neighborStackAnimation || DEFAULT_NEIGHBOR_STACK_ANIMATION), landingParticles: sanitizeLandingParticles(parsed(row.landing_particles_json, DEFAULT_LANDING_PARTICLES), defaults.landingParticles || DEFAULT_LANDING_PARTICLES), updatedAt };
   }
   updateSettings(patch, defaults = { scene: { groundY: 1080 }, pumpkinCurrency: 'RUB', twitch: { rewardIds: {} }, thresholds: DEFAULT_GROWTH_THRESHOLDS, growthMultipliers: DEFAULT_GROWTH_MULTIPLIERS }) {
     const current = this.getSettings(defaults);
@@ -132,6 +136,16 @@ export class Database {
     const multiplierPatch = patch.growthMultipliers === undefined ? {} : { growthMultipliers: validateGrowthMultipliers(patch.growthMultipliers) };
     if (patch.showPumpkinNames !== undefined && typeof patch.showPumpkinNames !== 'boolean') throw new Error('invalid_show_pumpkin_names');
     if (patch.customizationRewardMode !== undefined && !['single', 'all'].includes(patch.customizationRewardMode)) throw new Error('invalid_customization_reward_mode');
+    if (patch.landingParticles !== undefined) {
+      const landingParticles = landingParticlesPatch(patch.landingParticles, current.landingParticles);
+      if (!landingParticles) throw new Error('invalid_landing_particles');
+      patch.landingParticles = landingParticles;
+    }
+    if (patch.neighborStackAnimation !== undefined) {
+      const neighborStackAnimation = neighborStackAnimationPatch(patch.neighborStackAnimation, current.neighborStackAnimation);
+      if (!neighborStackAnimation) throw new Error('invalid_neighbor_stack_animation');
+      patch.neighborStackAnimation = neighborStackAnimation;
+    }
     const next = { ...current, ...patch, ...growthPatch, ...stagesPatch, ...multiplierPatch, ...validateSpawnSettings(patch) };
     if (patch.pumpkinNameFontSize !== undefined) {
       next.pumpkinNameFontSize = pumpkinNameFontSize(patch.pumpkinNameFontSize);
@@ -139,6 +153,8 @@ export class Database {
     }
     next.animation = sanitizeAnimation(next.animation, defaults.animation || DEFAULT_ANIMATION);
     next.towerAnimation = sanitizeTowerAnimation(next.towerAnimation, defaults.towerAnimation || DEFAULT_TOWER_ANIMATION);
+    next.neighborStackAnimation = sanitizeNeighborStackAnimation(next.neighborStackAnimation, defaults.neighborStackAnimation || DEFAULT_NEIGHBOR_STACK_ANIMATION);
+    next.landingParticles = sanitizeLandingParticles(next.landingParticles, defaults.landingParticles || DEFAULT_LANDING_PARTICLES);
     const storedGrowthThresholds = patch.growthThresholds === undefined
       ? this.sqlite.prepare('SELECT growth_thresholds_json FROM settings WHERE id = 1').get()?.growth_thresholds_json ?? null
       : JSON.stringify(next.growthThresholds);
@@ -148,10 +164,13 @@ export class Database {
     const storedGrowthMultipliers = patch.growthMultipliers === undefined
       ? this.sqlite.prepare('SELECT growth_multipliers_json FROM settings WHERE id = 1').get()?.growth_multipliers_json ?? null
       : JSON.stringify(next.growthMultipliers);
+    const storedLandingParticles = patch.landingParticles === undefined
+      ? this.sqlite.prepare('SELECT landing_particles_json FROM settings WHERE id = 1').get()?.landing_particles_json ?? JSON.stringify(DEFAULT_LANDING_PARTICLES)
+      : JSON.stringify(next.landingParticles);
     const groundYOverridden = patch.groundY === undefined
       ? this.sqlite.prepare('SELECT ground_y_overridden FROM settings WHERE id = 1').get()?.ground_y_overridden ?? 0
       : 1;
-    this.sqlite.prepare('UPDATE settings SET ground_y = ?, ground_y_overridden = ?, no_go_zone_json = ?, show_pumpkin_names = ?, pumpkin_name_font_size = ?, pumpkin_currency = ?, reward_mapping_json = ?, customization_reward_mode = ?, min_spawn_donation = ?, spawn_command = ?, roaming_interval_seconds = ?, roaming_speed = ?, roaming_jump_height = ?, roaming_min_distance = ?, roaming_max_distance = ?, growth_thresholds_json = ?, growth_stages_json = ?, growth_multipliers_json = ?, animation_json = ?, tower_animation_json = ?, updated_at = ? WHERE id = 1').run(next.groundY, groundYOverridden, JSON.stringify(next.noGoZone), Number(next.showPumpkinNames), next.pumpkinNameFontSize, next.pumpkinCurrency, JSON.stringify(next.rewardMapping), next.customizationRewardMode, next.minSpawnDonation, next.spawnCommand, next.roamingIntervalSeconds, next.roamingSpeed, next.roamingJumpHeight, next.roamingMinDistance, next.roamingMaxDistance, storedGrowthThresholds, storedGrowthStages, storedGrowthMultipliers, JSON.stringify(next.animation), JSON.stringify(next.towerAnimation), new Date().toISOString());
+    this.sqlite.prepare('UPDATE settings SET ground_y = ?, ground_y_overridden = ?, no_go_zone_json = ?, show_pumpkin_names = ?, pumpkin_name_font_size = ?, pumpkin_currency = ?, reward_mapping_json = ?, customization_reward_mode = ?, min_spawn_donation = ?, spawn_command = ?, roaming_interval_seconds = ?, roaming_speed = ?, roaming_jump_height = ?, roaming_min_distance = ?, roaming_max_distance = ?, growth_thresholds_json = ?, growth_stages_json = ?, growth_multipliers_json = ?, animation_json = ?, tower_animation_json = ?, neighbor_stack_animation_json = ?, landing_particles_json = ?, updated_at = ? WHERE id = 1').run(next.groundY, groundYOverridden, JSON.stringify(next.noGoZone), Number(next.showPumpkinNames), next.pumpkinNameFontSize, next.pumpkinCurrency, JSON.stringify(next.rewardMapping), next.customizationRewardMode, next.minSpawnDonation, next.spawnCommand, next.roamingIntervalSeconds, next.roamingSpeed, next.roamingJumpHeight, next.roamingMinDistance, next.roamingMaxDistance, storedGrowthThresholds, storedGrowthStages, storedGrowthMultipliers, JSON.stringify(next.animation), JSON.stringify(next.towerAnimation), JSON.stringify(next.neighborStackAnimation), storedLandingParticles, new Date().toISOString());
     return this.getSettings(defaults);
   }
 
@@ -198,6 +217,41 @@ export class Database {
   }
   deletePumpkin(id) { return this.sqlite.prepare('DELETE FROM pumpkins WHERE id = ?').run(id).changes > 0; }
   clearPumpkins() { return this.sqlite.prepare('DELETE FROM pumpkins').run().changes; }
+  saveJoinedStack(stack) {
+    if (!stack?.stackId || !Array.isArray(stack.members) || !stack.members.length) throw new Error('invalid_joined_stack');
+    const persist = this.sqlite.transaction(() => {
+      this.sqlite.prepare('INSERT OR REPLACE INTO joined_stacks (stack_id, expires_at, state_json) VALUES (?, ?, ?)')
+        .run(stack.stackId, stack.expiresAt, JSON.stringify(stack));
+      const insertMember = this.sqlite.prepare('INSERT INTO joined_stack_members (stack_id, pumpkin_id, member_order) VALUES (?, ?, ?)');
+      stack.members.forEach((member, index) => insertMember.run(stack.stackId, member.id, index));
+    });
+    persist();
+    return this.getJoinedStack(stack.stackId);
+  }
+  updateJoinedStack(stack) {
+    if (!stack?.stackId || !Array.isArray(stack.members) || !stack.members.length) throw new Error('invalid_joined_stack');
+    const update = this.sqlite.transaction(() => {
+      const result = this.sqlite.prepare('UPDATE joined_stacks SET expires_at = ?, state_json = ? WHERE stack_id = ?')
+        .run(stack.expiresAt, JSON.stringify(stack), stack.stackId);
+      if (result.changes !== 1) throw new Error('joined_stack_not_found');
+      const insertMember = this.sqlite.prepare('INSERT OR IGNORE INTO joined_stack_members (stack_id, pumpkin_id, member_order) VALUES (?, ?, ?)');
+      stack.members.forEach((member, index) => insertMember.run(stack.stackId, member.id, index));
+    });
+    update();
+    return this.getJoinedStack(stack.stackId);
+  }
+  getJoinedStack(stackId) {
+    const row = this.sqlite.prepare('SELECT state_json FROM joined_stacks WHERE stack_id = ?').get(stackId);
+    return row ? parsed(row.state_json, null) : null;
+  }
+  listJoinedStacks() {
+    return this.sqlite.prepare('SELECT state_json FROM joined_stacks ORDER BY expires_at, stack_id').all()
+      .map(({ state_json: state }) => parsed(state, null))
+      .filter(Boolean);
+  }
+  deleteJoinedStack(stackId) {
+    return this.sqlite.prepare('DELETE FROM joined_stacks WHERE stack_id = ?').run(stackId).changes > 0;
+  }
   insertDonation(event) {
     const provider = event.provider || 'donationalerts';
     if (!['donationalerts', 'donatex', 'memealerts'].includes(provider)) throw new Error('unsupported_donation_provider');

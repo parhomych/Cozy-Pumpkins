@@ -2,8 +2,9 @@ import { normalizeName, normalizeText, safeId } from '../utils/normalize.js';
 import { publicPumpkin } from './donations.js';
 import { buildTowerPlan } from './pumpkin-tower.js';
 import { parseCustomizationRequest, sanitizeCustomization } from './customization-parser.js';
+import { planNeighborStack } from './neighbor-pumpkin-stack.js';
 
-export const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost', 'pumpkin_tower', 'pumpkin_customization']);
+export const REWARD_ACTIONS = Object.freeze(['inflate', 'jump_on', 'morph_fly', 'bat', 'ghost', 'pumpkin_tower', 'pumpkin_customization', 'neighbor_stack']);
 
 // Returns a complete, safe mapping patch. Unknown action keys are ignored for
 // forwards compatibility; empty IDs remain valid to preserve disabled mappings.
@@ -43,7 +44,7 @@ function randomUnit(random) {
 }
 function mappedAction(rewardId, mapping) { for (const [action, id] of Object.entries(mapping || {})) if (id && id === rewardId) return action; return null; }
 export class RewardService {
-  constructor({ db, config, logger = console, emit = () => {}, random = Math.random } = {}) { Object.assign(this, { db, config, logger, emit, random }); }
+  constructor({ db, config, logger = console, emit = () => {}, random = Math.random, joinedStackService = null } = {}) { Object.assign(this, { db, config, logger, emit, random, joinedStackService }); }
   handle(raw) {
     const event = parseRedemption(raw); const now = new Date().toISOString(); let result; let autoLinkedPumpkinId = null;
     this.db.transaction(() => {
@@ -109,13 +110,50 @@ export class RewardService {
         return;
       }
       const context = { scene: this.config.scene, noGoZone: settings.noGoZone, growthMultipliers: settings.growthMultipliers };
+      if (action === 'neighbor_stack') {
+        if (!this.joinedStackService) throw new Error('neighbor_stack_service_unavailable');
+        const plan = planNeighborStack({
+          redeemer: pumpkin,
+          pumpkins: this.db.listPumpkins(),
+          joinedStacks: this.db.listJoinedStacks(),
+          context,
+          random: this.random,
+        });
+        if (plan.status !== 'planned') {
+          result = { duplicate: false, redemptionId: event.redemptionId, action, status: plan.status };
+          return;
+        }
+        const stack = this.joinedStackService.form({
+          members: plan.members,
+          targetStackId: plan.targetStackId,
+          animation: settings.neighborStackAnimation,
+        });
+        result = {
+          duplicate: false,
+          redemptionId: event.redemptionId,
+          action,
+          status: 'neighbor_stack_formed',
+          global: true,
+          payload: {
+            phase: 'form',
+            stackId: stack.stackId,
+            participants: stack.members,
+            formedAt: stack.formedAt,
+            expiresAt: stack.expiresAt,
+            lifetimeSeconds: stack.lifetimeSeconds,
+            animation: stack.animation,
+            finalPositions: stack.finalPositions,
+          },
+        };
+        return;
+      }
       result = this.applyAction(action, pumpkin, event.input, context);
     });
     if (result.duplicate) return result;
     if (autoLinkedPumpkinId) {
       this.emit('pumpkin:updated', { pumpkin: publicPumpkin(this.db.getPumpkin(autoLinkedPumpkinId)) });
     }
-    if (result.status === 'no_pumpkin_for_user' || result.status === 'ignored_reward' || result.status === 'ignored_input_too_long' || result.status === 'ignored_unrecognized_customization' || result.status === 'no_safe_tower_layout' || result.status === 'no_pumpkins') return result;
+    if (result.status === 'no_pumpkin_for_user' || result.status === 'ignored_reward' || result.status === 'ignored_input_too_long' || result.status === 'ignored_unrecognized_customization' || result.status === 'no_safe_tower_layout' || result.status === 'no_pumpkins' || result.status === 'no_eligible_neighbor' || result.status === 'no_safe_stack_layout') return result;
     if (result.action === 'pumpkin_customization') {
       if (result.pumpkin.id !== autoLinkedPumpkinId) this.emit('pumpkin:updated', { pumpkin: result.pumpkin });
       return result;

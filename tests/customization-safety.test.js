@@ -103,10 +103,10 @@ test('oversized input is ignored instead of truncated and later valid input stil
       rewardId: 'appearance-reward',
       userId: 'viewer-long',
       userLogin: 'viewer-long',
-      input: 'ghost skin',
+      input: 'sleepy eyes',
     });
     assert.equal(valid.status, 'customization_applied');
-    assert.equal(valid.pumpkin.customization.skin, 'ghost');
+    assert.equal(valid.pumpkin.customization.eyes, 'sleepy');
   } finally {
     db.close();
   }
@@ -127,7 +127,7 @@ test('ambiguous Twitch ownership and duplicate redemption delivery never repeat 
       rewardId: 'appearance-reward',
       userId: 'shared-viewer',
       userLogin: 'shared-viewer',
-      input: 'ghost skin',
+      input: 'sleepy eyes',
     });
     assert.equal(ambiguous.status, 'no_pumpkin_for_user');
     assert.deepEqual(db.getPumpkin(first.id).customization, first.customization);
@@ -139,7 +139,7 @@ test('ambiguous Twitch ownership and duplicate redemption delivery never repeat 
       rewardId: 'appearance-reward',
       userId: 'shared-viewer',
       userLogin: 'shared-viewer',
-      input: 'ghost skin',
+      input: 'sleepy eyes',
     };
     const applied = rewards.handle(event);
     assert.equal(applied.status, 'customization_applied');
@@ -147,7 +147,7 @@ test('ambiguous Twitch ownership and duplicate redemption delivery never repeat 
     const duplicate = rewards.handle(event);
     assert.equal(duplicate.duplicate, true);
     assert.equal(events.length, eventCount);
-    assert.equal(db.getPumpkin(first.id).customization.skin, 'ghost');
+    assert.equal(db.getPumpkin(first.id).customization.eyes, 'sleepy');
   } finally {
     db.close();
   }

@@ -28,13 +28,15 @@ const DEFAULT_ANIMATION = Object.freeze({ eyeFrequency: 1, mouthFrequency: 1 });
 
 /** One independently animated pumpkin. Positioning lives on .mover; idle body motion is below the inert .floater wrapper. */
 export class PumpkinCharacter {
-  constructor(pumpkin, { interactive = false, onPointerDown = null, positioning = 'scene', animationSettings = null, previewSize = null, growthMultipliers = null, showPumpkinNames = true, pumpkinNameFontSize = DEFAULT_NAME_FONT_SIZE } = {}) {
+  constructor(pumpkin, { interactive = false, onPointerDown = null, onLand = null, positioning = 'scene', animationSettings = null, previewSize = null, growthMultipliers = null, showPumpkinNames = true, pumpkinNameFontSize = DEFAULT_NAME_FONT_SIZE, isSpawning = false } = {}) {
+    this.onLand = typeof onLand === 'function' ? onLand : null;
     this.positioning = positioning;
     this.previewSize = Number.isFinite(Number(previewSize)) ? Number(previewSize) : null;
     this.animationSettings = { ...DEFAULT_ANIMATION, ...(animationSettings || {}) };
     this.growthMultipliers = normalizeGrowthMultipliers(growthMultipliers || {});
     this.showPumpkinNames = showPumpkinNames !== false;
     this.pumpkinNameFontSize = this._normalizeNameFontSize(pumpkinNameFontSize);
+    this.isSpawning = Boolean(isSpawning);
     this.data = { ...pumpkin, customization: normalizeCustomization(pumpkin.customization) };
     this.root = createPumpkinSvg(this.data);
     this.nameLabel = null;
@@ -71,6 +73,11 @@ export class PumpkinCharacter {
     this._applyStageGeometry(this.data.stage);
     this._refreshNameLabel();
     this.setPositionImmediate(this.x, this.y, this.isAirborne);
+    if (this.isSpawning && this.root?.style) {
+      this.root.style.opacity = '0';
+      this.root.style.visibility = 'hidden';
+      this.root.style.pointerEvents = 'none';
+    }
     this._context = getGsap()?.context?.(() => {}, this.root) || null;
   }
 
@@ -352,11 +359,18 @@ export class PumpkinCharacter {
         this.supportY = landingY;
         this.root.classList.remove('is-airborne');
         this.data = { ...this.data, x: nextX, y: nextY, isAirborne: false };
+        this._triggerLanding();
       }
       this._setPosition(nextX, nextY);
       if (!this.physicsActive) return false;
     }
     return true;
+  }
+
+  _triggerLanding() {
+    if (this.destroyed) return;
+    this.onLand?.(this);
+    this.root?.dispatchEvent?.(new CustomEvent('pumpkin-land', { bubbles: true, detail: { character: this, x: this.x, y: this.y } }));
   }
 
   stopPhysics() {
@@ -367,6 +381,9 @@ export class PumpkinCharacter {
   }
 
   moveTo(x, y, { duration = 0.16, isAirborne = this.isAirborne, immediate = false } = {}) {
+    if (this.isSpawning) {
+      return this.setPositionImmediate(x, y, isAirborne);
+    }
     this.stopPhysics();
     this.stopAction();
     const gsap = this._gsap();
@@ -383,6 +400,11 @@ export class PumpkinCharacter {
   }
 
   hopTo(x, y, { duration = null, speed = 140, height = null } = {}) {
+    if (this.isSpawning) {
+      this.x = Number.isFinite(Number(x)) ? Number(x) : this.x;
+      this.y = Number.isFinite(Number(y)) ? Number(y) : this.y;
+      return this;
+    }
     const targetX = Number.isFinite(Number(x)) ? Number(x) : this.x;
     const targetY = Number.isFinite(Number(y)) ? Number(y) : this.y;
     const gsap = this._gsap();
@@ -443,6 +465,9 @@ export class PumpkinCharacter {
       scaleY: .84,
       duration: landingSquashDuration,
       ease: 'sine.inOut',
+      onStart: () => {
+        this._triggerLanding();
+      },
     }, landingStart);
     timeline.to(this.actor, {
       scaleX: 1,
@@ -469,7 +494,15 @@ export class PumpkinCharacter {
     this._refreshNameLabel();
     this._applyStageGeometry(this.data.stage);
     this._setPosition(this.x, this.y);
-    if (wasIdle) this.startIdle();
+    if (this.isSpawning) {
+      if (this.root?.style) {
+        this.root.style.opacity = '0';
+        this.root.style.visibility = 'hidden';
+        this.root.style.pointerEvents = 'none';
+      }
+    } else if (wasIdle) {
+      this.startIdle();
+    }
     return this;
   }
 
@@ -478,7 +511,7 @@ export class PumpkinCharacter {
   }
 
   startIdle() {
-    if (this.destroyed || this.idleStarted) return this;
+    if (this.destroyed || this.idleStarted || this.isSpawning) return this;
     this.idleStarted = true;
     // Each channel gets its own initial jitter as well as a fresh jitter on every repeat.
     this._scheduleFloat();
@@ -825,6 +858,14 @@ export class PumpkinCharacter {
     if (normalizedStage !== this.stage) this._rebuildArtwork({ stage: normalizedStage });
     else this._applyStageGeometry(normalizedStage);
     this._setPosition(this.x, this.y);
+    if (this.isSpawning) {
+      if (this.root?.style) {
+        this.root.style.opacity = '0';
+        this.root.style.visibility = 'hidden';
+        this.root.style.pointerEvents = 'none';
+      }
+      return this;
+    }
     const gsap = this._gsap();
     if (gsap) this._trackAction(gsap.fromTo(this.root, { scale: .7, opacity: .4 }, { scale: 1, opacity: 1, duration: .5, ease: 'back.out(2)', overwrite: 'auto' }));
     return this;
@@ -909,13 +950,49 @@ export class PumpkinCharacter {
     const timeline = gsap.timeline({ delay, defaults: { overwrite: 'auto' }, onComplete: finish });
     timeline.to(this.actor, { scaleX: 1.12, scaleY: .86, duration: .18, transformOrigin: '50% 100%', ease: 'power2.in' })
       .to(position, { x: fallX, y: landingY, duration: fallDuration, ease: 'power3.in', onUpdate: () => this._setPosition(position.x, position.y) }, '<')
-      .to(this.actor, { scaleX: 1.2, scaleY: .78, duration: .12, ease: 'power2.out' })
+      .to(this.actor, {
+        scaleX: 1.2,
+        scaleY: .78,
+        duration: .12,
+        ease: 'power2.out',
+        onStart: () => {
+          this._triggerLanding();
+        },
+      })
       .to(this.actor, { scaleX: .96, scaleY: 1.04, duration: .28, ease: 'elastic.out(1, .55)' })
       .to(this.actor, { rotation: spin, duration: rollDuration, ease: 'none' }, '<')
       .to(position, { x: targetX, y: landingY, duration: rollDuration, ease: 'sine.inOut', onUpdate: () => this._setPosition(position.x, position.y) }, '<')
       .to(this.actor, { rotation: 0, scaleX: 1.04, scaleY: .96, duration: .16, ease: 'back.out(1.4)' })
       .to(this.actor, { scaleX: 1, scaleY: 1, duration: .32, ease: 'elastic.out(1, .5)' });
     return this._trackAction(timeline);
+  }
+
+  appear(onComplete) {
+    this.isSpawning = false;
+    if (this.root?.style) {
+      this.root.style.visibility = 'visible';
+      this.root.style.pointerEvents = '';
+    }
+    const gsap = this._gsap();
+    if (!gsap) {
+      if (this.root?.style) this.root.style.opacity = '1';
+      onComplete?.();
+      return this;
+    }
+    gsap.set(this.root, { opacity: 0, scale: 0.15, transformOrigin: '50% 90%' });
+    const tween = gsap.to(this.root, {
+      opacity: 1,
+      scale: 1,
+      duration: 0.52,
+      ease: 'back.out(1.8)',
+      onComplete: () => {
+        this.tweens.delete(tween);
+        if (this.root?.style) this.root.style.opacity = '1';
+        onComplete?.();
+      },
+    });
+    this.tweens.add(tween);
+    return this;
   }
 
   disappear(onComplete) {

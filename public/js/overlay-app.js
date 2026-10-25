@@ -1,4 +1,4 @@
-import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=twitch-customization-20261025';
+import { PumpkinRenderer } from './shared/pumpkin-renderer.js?v=neighbor-stack-v2';
 
 const connectionPill = document.querySelector('#connection-state');
 const canvas = document.querySelector('#overlay-scene');
@@ -14,11 +14,12 @@ function connect() {
   socket.on('disconnect', () => showConnection('Reconnecting…'));
   socket.on('connect_error', () => showConnection('Reconnecting…'));
   socket.io?.on('reconnect_attempt', () => showConnection('Reconnecting…'));
-  socket.on('scene:init', (scene = {}) => { renderer.setSettings(scene.settings || {}); renderer.sync(Array.isArray(scene.pumpkins) ? scene.pumpkins : []); showConnection('Live', false); });
+  socket.on('scene:init', (scene = {}) => { renderer.setSettings(scene.settings || {}); renderer.sync(Array.isArray(scene.pumpkins) ? scene.pumpkins : [], Array.isArray(scene.joinedStacks) ? scene.joinedStacks : []); showConnection('Live', false); });
   socket.on('settings:updated', ({ settings } = {}) => renderer.setSettings(settings || {}));
-  socket.on('pumpkin:spawned', ({ pumpkin }) => renderer.add(pumpkin, { immediate: true }));
+  socket.on('pumpkin:spawned', ({ pumpkin }) => renderer.add(pumpkin, { immediate: false }));
   socket.on('pumpkin:updated', ({ pumpkin }) => renderer.update(pumpkin));
   socket.on('pumpkin:move', (payload) => renderer.applyMove(payload));
+  socket.on('pumpkin:stack-move', (payload) => renderer.moveNeighborStack(payload));
   socket.on('pumpkin:move-ended', (payload) => renderer.finishMove(payload));
   socket.on('pumpkin:evolved', (payload = {}) => { renderer.characters.get(payload.id)?.evolve(payload.stage); });
   socket.on('pumpkin:action', handleAction);

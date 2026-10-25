@@ -1,4 +1,4 @@
-export const DEFAULT_GROWTH_STAGES = Object.freeze({ stage2: true, stage3: true, stage4: true });
+export const DEFAULT_GROWTH_STAGES = Object.freeze({ stage2: true, stage3: false, stage4: true });
 
 export function validateGrowthStages(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('invalid_growth_stages');

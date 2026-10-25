@@ -58,7 +58,7 @@ test('server serves status and both user-facing HTML pages without leaking secre
     const donation = await request(port, '/api/dev/donation', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: donationBody });
     assert.equal(donation.status, 201);
     const created = JSON.parse(donation.body).result.pumpkin;
-    assert.equal(created.customization.skin, 'witch');
+    assert.equal(created.customization.skin, 'classic');
     assert.equal('animation' in created, false);
     const testReward = await request(port, '/api/dev/reward', { method: 'POST', headers: { 'Content-Type': 'application/json', Cookie: cookie }, body: JSON.stringify({ action: 'pumpkin_tower' }) });
      assert.equal(testReward.status, 201);
@@ -166,7 +166,7 @@ test('spawn settings persist, reject invalid updates, and expose the read-only c
     assert.equal(defaults.settings.spawnCommand, '!тыковка');
     assert.ok(Array.isArray(defaults.customizationCatalog));
     const skinGroup = defaults.customizationCatalog.find(({ slot }) => slot === 'skin');
-    assert.ok(skinGroup.values.some(({ value, keywords }) => value === 'witch' && keywords.includes('ведьма')));
+    assert.ok(skinGroup.values.some(({ value, keywords }) => value === 'classic' && keywords.includes('классика')));
 
     const cookie = firstRead.headers['set-cookie']?.[0]?.split(';')[0];
     const update = await request(port, '/api/settings', {
@@ -208,7 +208,7 @@ test('growth thresholds use configured defaults, persist valid values, and rejec
     const firstRead = await request(port, '/api/settings');
     const defaults = JSON.parse(firstRead.body);
     assert.deepEqual(defaults.settings.growthThresholds, config.thresholds);
-    assert.deepEqual(defaults.settings.growthStages, { stage2: true, stage3: true, stage4: true });
+    assert.deepEqual(defaults.settings.growthStages, { stage2: true, stage3: false, stage4: true });
     const cookie = firstRead.headers['set-cookie']?.[0]?.split(';')[0];
     const validThresholds = { stage2: 350, stage3: 1200, stage4: 4500 };
     const update = await request(port, '/api/settings', {
@@ -254,20 +254,20 @@ test('HTTP growth-stage updates validate settings and recalculate existing pumpk
     const spawn = service.handle({
       id: 'http-stage-donation',
       name: 'HTTP Stage Viewer',
-      amount: config.thresholds.stage3,
+      amount: config.thresholds.stage2,
       currency: config.pumpkinCurrency,
       message: '!тыковка',
     });
-    assert.equal(spawn.pumpkin.stage, 3);
+    assert.equal(spawn.pumpkin.stage, 2);
 
     const update = await request(port, '/api/settings', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Cookie: cookie },
-      body: JSON.stringify({ growthStages: { stage2: true, stage3: false, stage4: true } }),
+      body: JSON.stringify({ growthStages: { stage2: false, stage3: false, stage4: true } }),
     });
     assert.equal(update.status, 200);
-    assert.deepEqual(JSON.parse(update.body).settings.growthStages, { stage2: true, stage3: false, stage4: true });
-    assert.equal(db.getPumpkin('http-stage-pumpkin').stage, 2);
+    assert.deepEqual(JSON.parse(update.body).settings.growthStages, { stage2: false, stage3: false, stage4: true });
+    assert.equal(db.getPumpkin('http-stage-pumpkin').stage, 1);
 
     const invalid = await request(port, '/api/settings', {
       method: 'PATCH',
@@ -276,7 +276,7 @@ test('HTTP growth-stage updates validate settings and recalculate existing pumpk
     });
     assert.equal(invalid.status, 400);
     assert.equal(JSON.parse(invalid.body).error, 'invalid_growth_stages');
-    assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: false, stage4: true });
+    assert.deepEqual(db.getSettings(config).growthStages, { stage2: false, stage3: false, stage4: true });
   } finally {
     runtime.db.close();
     await new Promise((resolve) => runtime.server.close(resolve));

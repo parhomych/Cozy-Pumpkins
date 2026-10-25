@@ -402,12 +402,24 @@ export class WitchAssistant {
     this.activeTweens.push(legL, legR, bodyBounce, torsoLean, headInertia, hatBob, armL, armR, wingL, wingR, tailWave);
   }
 
-  performMagic(duration = 1.5) {
+  performMagic(duration = 1.5, options = {}) {
+    const onClimax = typeof options === 'function' ? options : options?.onClimax;
     this._stopAnimations();
-    if (typeof gsap === 'undefined') return Promise.resolve();
+    if (typeof gsap === 'undefined') {
+      if (typeof onClimax === 'function') onClimax();
+      return Promise.resolve();
+    }
     this._ensureOrigins();
 
     return new Promise((resolve) => {
+      let climaxFired = false;
+      const fireClimax = () => {
+        if (!climaxFired) {
+          climaxFired = true;
+          if (typeof onClimax === 'function') onClimax();
+        }
+      };
+
       // Phase 1: Wind-up & Gathering Arcane Energy (0.24s)
       gsap.to(this.rootGroup, { y: 6, scaleY: 0.95, scaleX: 1.04, duration: 0.24, ease: 'power2.in' });
       gsap.to(this.rotators.torso, { rotation: 5, duration: 0.24, ease: 'power2.in' });
@@ -476,10 +488,16 @@ export class WitchAssistant {
         this._emitSparkles(duration - 0.24);
       }, 240);
 
-      // Climax transformation moment
+      // Climax transformation moment (at ~60% of duration)
       this._scheduleTimer(() => {
+        fireClimax();
+      }, duration * 1000 * 0.60);
+
+      // Climax completion
+      this._scheduleTimer(() => {
+        fireClimax();
         resolve();
-      }, duration * 1000 * 0.72);
+      }, duration * 1000 * 0.75);
     });
   }
 
@@ -640,16 +658,67 @@ export class WitchAssistant {
     });
   }
 
+  cancelMissionsForCharacter(pumpkinCharacter) {
+    if (!pumpkinCharacter) return;
+    const charId = pumpkinCharacter?.data?.id || pumpkinCharacter?.id;
+    this.missionQueue = this.missionQueue.filter((mission) => {
+      const missionChar = mission.pumpkinCharacter;
+      const mId = missionChar?.data?.id || missionChar?.id;
+      if (missionChar === pumpkinCharacter) return false;
+      if (charId && mId && charId === mId) return false;
+      return true;
+    });
+  }
+
   /**
-   * Main mission orchestrator:
-   * 1. Spawns from random side of screen (or requested side)
-   * 2. Walks to pumpkin
-   * 3. Casts magic with hand animation
-   * 4. Transforms pumpkin via onApply()
-   * 5. Exits offscreen
+   * Customization transformation mission:
+   * 1. Walks to pumpkin
+   * 2. Casts magic with hand animation
+   * 3. Transforms pumpkin via onApply()
+   * 4. Exits offscreen
    */
   queueMission({ pumpkinCharacter, targetCustomization, onApply, groundY = 1040, side = null }) {
-    this.missionQueue.push({ pumpkinCharacter, targetCustomization, onApply, groundY, side });
+    this.missionQueue.push({
+      type: 'customization',
+      pumpkinCharacter,
+      targetCustomization,
+      onApply,
+      groundY,
+      side,
+    });
+    if (!this.isBusy) this._processNextMission();
+  }
+
+  /**
+   * Donation spawn mission:
+   * 1. Witch walks in to spawn coordinates along the bottom edge of widget
+   * 2. Faces the target spot
+   * 3. Casts magic with hand movements
+   * 4. Summons leaf drift ("сугроб листьев - частиц") in front of her
+   * 5. Inside the drift, reveals the new pumpkin as leaves fall & disappear
+   * 6. Celebrates with ta-da hop and exits offscreen
+   */
+  queueSpawnMission({
+    pumpkinCharacter,
+    targetX,
+    targetY,
+    groundY = 1040,
+    side = null,
+    onSpawnLeafDrift = null,
+    onRevealPumpkin = null,
+    onComplete = null,
+  }) {
+    this.missionQueue.push({
+      type: 'spawn',
+      pumpkinCharacter,
+      targetX,
+      targetY,
+      groundY,
+      side,
+      onSpawnLeafDrift,
+      onRevealPumpkin,
+      onComplete,
+    });
     if (!this.isBusy) this._processNextMission();
   }
 
@@ -662,6 +731,18 @@ export class WitchAssistant {
 
     this.isBusy = true;
     const mission = this.missionQueue.shift();
+    const type = mission.type || 'customization';
+
+    if (type === 'spawn') {
+      await this._executeSpawnMission(mission);
+    } else {
+      await this._executeCustomizationMission(mission);
+    }
+
+    this._processNextMission();
+  }
+
+  async _executeCustomizationMission(mission) {
     const { pumpkinCharacter, onApply, groundY, side } = mission;
 
     // Target pumpkin coords
@@ -722,9 +803,106 @@ export class WitchAssistant {
     await this.walkTo(exitX, pY);
 
     this.hide();
+  }
 
-    // Check next mission
-    this._processNextMission();
+  async _executeSpawnMission(mission) {
+    const {
+      pumpkinCharacter,
+      targetX,
+      targetY,
+      groundY = 1040,
+      side,
+      onSpawnLeafDrift,
+      onRevealPumpkin,
+      onComplete,
+    } = mission;
+
+    // Check if pumpkin character was destroyed before witch arrived
+    if (pumpkinCharacter?.destroyed) {
+      if (typeof onComplete === 'function') onComplete();
+      return;
+    }
+
+    const pX = Number.isFinite(targetX) ? targetX : (Number.isFinite(pumpkinCharacter?.x) ? pumpkinCharacter.x : 960);
+    const pY = Number.isFinite(targetY) ? targetY : (Number.isFinite(pumpkinCharacter?.y) ? pumpkinCharacter.y : groundY);
+
+    // Ensure pumpkin is hidden while witch approaches
+    if (pumpkinCharacter?.root?.style) {
+      pumpkinCharacter.root.style.opacity = '0';
+      pumpkinCharacter.root.style.visibility = 'hidden';
+      pumpkinCharacter.root.style.pointerEvents = 'none';
+    }
+
+    let startFromLeft;
+    if (side === 'left') {
+      startFromLeft = true;
+    } else if (side === 'right') {
+      startFromLeft = false;
+    } else {
+      if (pX < 320) {
+        startFromLeft = false; // approach from right to stand at pX + 150
+      } else if (pX > SCENE_WIDTH - 320) {
+        startFromLeft = true; // approach from left to stand at pX - 150
+      } else {
+        startFromLeft = Math.random() < 0.5;
+      }
+    }
+
+    const startX = startFromLeft ? -150 : SCENE_WIDTH + 150;
+    const standOffset = startFromLeft ? -150 : 150;
+    const targetStandX = Math.max(80, Math.min(SCENE_WIDTH - 80, pX + standOffset));
+
+    this.setPosition(startX, pY);
+    this.setFacing(startFromLeft ? 1 : -1);
+    this.show();
+
+    // 1. Walk to pumpkin spawn location along the bottom edge
+    await this.walkTo(targetStandX, pY);
+
+    // Face the spawn point directly
+    this.setFacing(pX >= this.x ? 1 : -1);
+    if (typeof gsap !== 'undefined') {
+      await new Promise((r) => this._scheduleTimer(r, 120));
+    }
+
+    // 2. Perform magic casting with hands
+    let driftSpawned = false;
+    let pumpkinRevealed = false;
+
+    await this.performMagic(1.8, {
+      onClimax: () => {
+        if (!driftSpawned) {
+          driftSpawned = true;
+          if (typeof onSpawnLeafDrift === 'function') {
+            onSpawnLeafDrift(pX, pY);
+          }
+        }
+      },
+    });
+
+    // 3. Reveal pumpkin from the leaf drift pile (guaranteed before celebration)
+    if (!pumpkinRevealed) {
+      pumpkinRevealed = true;
+      if (typeof onRevealPumpkin === 'function') {
+        onRevealPumpkin();
+      }
+    }
+
+    // 4. Ta-da! Celebration
+    await this.celebrate();
+    if (typeof gsap !== 'undefined') {
+      await new Promise((r) => this._scheduleTimer(r, 200));
+    }
+
+    // 4. Exit off-screen
+    const exitX = this.x < SCENE_WIDTH / 2 ? -200 : SCENE_WIDTH + 200;
+    await this.walkTo(exitX, pY);
+
+    this.hide();
+
+    if (typeof onComplete === 'function') {
+      onComplete();
+    }
   }
 
   destroy() {

@@ -462,14 +462,14 @@ test('Twitch appearance redemption survives closing and reopening the applicatio
       rewardId: 'appearance-reward',
       userId: 'persisted-viewer',
       userLogin: 'persisted-viewer',
-      input: 'ghost skin',
+      input: 'sleepy eyes',
     });
     assert.equal(result.status, 'customization_applied');
     db.close();
 
     const reopened = new Database(databasePath);
     assert.equal(reopened.getSettings(config).rewardMapping.pumpkin_customization, 'appearance-reward');
-    assert.equal(reopened.getPumpkin('persisted-viewer-pumpkin').customization.skin, 'ghost');
+    assert.equal(reopened.getPumpkin('persisted-viewer-pumpkin').customization.eyes, 'sleepy');
     reopened.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });

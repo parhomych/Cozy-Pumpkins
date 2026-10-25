@@ -68,7 +68,7 @@ test('donation commands without recognized face choices keep randomized selectio
   try {
     const result = service.handle(donation('unknown-only', 'Unknown Only', '!тыковка unknown'));
     assert.equal(result.spawned, true);
-    assert.equal(result.pumpkin.customization.eyes, 'sly');
+    assert.equal(result.pumpkin.customization.eyes, 'stars');
     assert.equal(result.pumpkin.customization.mouth, 'fangs');
   } finally {
     db.close();

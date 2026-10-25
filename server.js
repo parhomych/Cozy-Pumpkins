@@ -12,6 +12,7 @@ import { OAuthAdapters } from './src/auth/oauth-adapters.js';
 import { DonationService } from './src/engine/donations.js';
 import { RewardService } from './src/engine/rewards.js';
 import { createPumpkinMovementScheduler } from './src/engine/pumpkin-movement.js';
+import { JoinedStackService } from './src/engine/joined-stack-service.js';
 import { TwitchApiClient } from './src/integrations/twitch-api.js';
 import { TwitchEventSub } from './src/integrations/twitch-eventsub.js';
 import { DonationAlertsEvents } from './src/integrations/donationalerts-events.js';
@@ -32,8 +33,9 @@ export function createApp({ config = loadConfig(), db = null, logger = createLog
   const broadcaster = { current: () => {} };
   const broadcast = (event, payload) => broadcaster.current(event, payload);
   const movementSchedulerRef = { current: null };
+  const joinedStackService = new JoinedStackService({ db: database, config, logger, broadcast });
   const donations = new DonationService({ db: database, config, logger, emit: broadcast });
-  const rewards = new RewardService({ db: database, config, logger, emit: broadcast });
+  const rewards = new RewardService({ db: database, config, logger, emit: broadcast, joinedStackService });
   const twitchApi = new TwitchApiClient({ config, tokenStore, fetchImpl });
   const oauth = new OAuthAdapters({ config, tokenStore, statuses, twitchApi, logger, fetchImpl });
   twitchApi.getAccessToken = () => oauth.getAccessToken('twitch');
@@ -52,11 +54,11 @@ export function createApp({ config = loadConfig(), db = null, logger = createLog
     donatex: new DonatExEvents({ ...providerEventFactories.donatex, oauth, statuses, onDonation: (event) => donations.handle(event), logger }),
     memealerts: new MemeAlertsEvents({ ...providerEventFactories.memealerts, oauth, tokenStore, statuses, onDonation: (event) => donations.handle(event), fetchImpl, websocket: WebSocketImpl, logger }),
   };
-  app.locals.cozyPumpkins = { config, db: database, tokenStore, statuses, oauth, donations, rewards, twitchApi, twitchEventSub, providerEvents, broadcast, setBroadcast: (fn) => { broadcaster.current = fn; }, setMovementScheduler: (scheduler) => { movementSchedulerRef.current = scheduler; } };
+  app.locals.cozyPumpkins = { config, db: database, tokenStore, statuses, oauth, donations, rewards, joinedStackService, twitchApi, twitchEventSub, providerEvents, broadcast, setBroadcast: (fn) => { broadcaster.current = fn; }, setMovementScheduler: (scheduler) => { movementSchedulerRef.current = scheduler; } };
   app.use('/api', createApiRouter({ config, db: database, statuses, oauth, tokenStore, donations, rewards, twitchApi, twitchEventSub, providerEvents, broadcast, onMovementSettingsUpdated: () => movementSchedulerRef.current?.settingsUpdated(), logger, publicDir: null }));
   if (publicDir) app.use(express.static(publicDir, { index: false }));
   app.use((error, req, res, next) => { if (error?.type === 'entity.too.large') return res.status(413).json({ error: 'payload_too_large' }); if (res.headersSent) return next(error); logger.error('Unhandled HTTP error', { reason: error?.message }); return res.status(500).json({ error: 'internal_error' }); });
-  if (io) { broadcaster.current = (event, payload) => io.emit(event, payload); attachSocketHandlers(io, { config, db: database, statuses, logger }); }
+  if (io) { broadcaster.current = (event, payload) => io.emit(event, payload); attachSocketHandlers(io, { config, db: database, statuses, logger, joinedStackService }); }
   return app;
 }
 
@@ -67,6 +69,7 @@ export function createServer(options = {}) {
   const movementScheduler = createPumpkinMovementScheduler({
     db: cozy.db,
     config,
+    joinedStackService: cozy.joinedStackService,
     broadcast: (event, payload) => io.emit(event, payload),
     onError: (error) => logger.error('Pumpkin movement scheduler failed', { reason: error?.message }),
   });
@@ -86,12 +89,14 @@ export function createServer(options = {}) {
   };
   const stopMovement = () => {
     movementScheduler.stop();
+    cozy.joinedStackService.stop();
     clearTimeout(towerResumeTimer);
     towerResumeTimer = null;
   };
   server.once('close', stopMovement);
   cozy.setBroadcast(broadcast); cozy.broadcast = broadcast; cozy.donations.emit = broadcast; cozy.rewards.emit = broadcast;
-  attachSocketHandlers(io, { config, db: cozy.db, statuses: cozy.statuses, logger, movementScheduler });
+  attachSocketHandlers(io, { config, db: cozy.db, statuses: cozy.statuses, logger, movementScheduler, joinedStackService: cozy.joinedStackService });
+  cozy.joinedStackService.start();
   movementScheduler.start();
   const shutdown = async () => {
     stopMovement();

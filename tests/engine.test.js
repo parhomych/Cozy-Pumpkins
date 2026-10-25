@@ -53,13 +53,13 @@ function insertMovementTestPumpkin(db, id, x, y, stage = 1) {
 test('customization parser accepts the documented command and ignores unknown words', () => {
   const parsed = parseCustomization('  !ТЫКОВКА ведьма рожки хитрые клыки метла неизвестно');
   assert.equal(parsed.commandDetected, true);
-  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'sly', mouth: 'fangs', hat: 'none', prop: 'none' });
+  assert.deepEqual(parsed.customization, { skin: 'classic', eyes: 'cute', mouth: 'fangs', hat: 'none', prop: 'none' });
 });
 
 test('customization parser recognizes the configured command prefix only', () => {
   const parsed = parseCustomization('  !Pumpkin witch stars метла extra', undefined, '!pumpkin');
   assert.equal(parsed.commandDetected, true);
-  assert.deepEqual(parsed.customization, { skin: 'witch', eyes: 'stars', mouth: 'cat', hat: 'none', prop: 'none' });
+  assert.deepEqual(parsed.customization, { skin: 'classic', eyes: 'stars', mouth: 'cat', hat: 'none', prop: 'none' });
   assert.equal(parseCustomization('!pumpkinExtra witch', undefined, '!pumpkin').commandDetected, false);
   assert.equal(parseCustomization('!тыковка witch', undefined, '!pumpkin').commandDetected, false);
 });
@@ -72,6 +72,7 @@ test('customization catalog exposes canonical values and aliases for supported s
     assert.ok(group.values.every(({ value, keywords }) => keywords.includes(value) || (group.slot === 'hat' && value === 'witch' && keywords.includes('witch hat'))));
   }
   assert.deepEqual(catalog.find(({ slot }) => slot === 'hat').values, [
+    { value: 'none', keywords: ['none', 'нет', 'ничего', 'без шляпы'] },
     { value: 'witch', keywords: ['witch hat', 'witch_hat', 'шляпа ведьмы', 'ведьминская шляпа'] },
   ]);
   assert.deepEqual(catalog.find(({ slot }) => slot === 'prop').values, [
@@ -97,9 +98,9 @@ test('plain customization requests preserve text order, prefer long aliases, and
     { slot: 'mouth', value: 'fangs' },
     { slot: 'eyes', value: 'stars' },
   ]);
-  assert.deepEqual(parseCustomizationRequest('witch'), [{ slot: 'skin', value: 'witch' }]);
-  assert.deepEqual(parseCustomizationRequest(`${'x'.repeat(257)} ghost`), []);
-  assert.deepEqual(parseCustomizationRequest(`ghost${' '.repeat(252)}`), []);
+  assert.deepEqual(parseCustomizationRequest('classic'), [{ slot: 'skin', value: 'classic' }]);
+  assert.deepEqual(parseCustomizationRequest(`${'x'.repeat(257)} classic`), []);
+  assert.deepEqual(parseCustomizationRequest(`classic${' '.repeat(252)}`), []);
 });
 
 test('donation customization recognizes cocoa-hands aliases and sanitation preserves supported choices', () => {
@@ -192,10 +193,10 @@ test('donation processing creates, evolves, and deduplicates a pumpkin', () => {
   assert.equal(first.spawned, true);
   assert.equal('animation' in first.pumpkin, false);
   assert.equal(first.pumpkin.stage, 2);
-  assert.equal(first.pumpkin.customization.skin, 'witch');
+  assert.equal(first.pumpkin.customization.skin, 'classic');
   assert.equal(service.handle({ id: 'donation-1', name: 'Spooky Viewer', amount: 300, currency: 'RUB' }).duplicate, true);
-  const second = service.handle({ id: 'donation-2', name: 'Spooky Viewer', amount: 700, currency: 'RUB' });
-  assert.equal(second.pumpkin.stage, 3);
+  const second = service.handle({ id: 'donation-2', name: 'Spooky Viewer', amount: 2700, currency: 'RUB' });
+  assert.equal(second.pumpkin.stage, 4);
   assert.equal(db.listPumpkins().length, 1);
   assert.deepEqual(events.map(([event]) => event), ['pumpkin:spawned', 'pumpkin:evolved', 'pumpkin:updated', 'pumpkin:evolved']);
   db.close();
@@ -223,7 +224,7 @@ test('a bare spawn command creates a pumpkin with randomized eyes and mouth', ()
 
   assert.equal(result.spawned, true);
   assert.equal(result.pumpkin.customization.eyes, 'stars');
-  assert.equal(result.pumpkin.customization.mouth, 'o');
+  assert.equal(result.pumpkin.customization.mouth, 'neca_mouth');
   const spawnWidth = dimensionsFor({ stage: 1 }, db.getSettings(config).growthMultipliers).width;
   assert.equal(result.pumpkin.x, spawnWidth / 2 + (config.scene.width - spawnWidth) * 0.25);
   assert.equal(result.pumpkin.y, config.scene.groundY);
@@ -275,8 +276,8 @@ test('donation processing applies persisted cumulative growth thresholds', () =>
   assert.equal(donate('threshold-2', 49).pumpkin.stage, 1);
   assert.equal(donate('threshold-3', 1).pumpkin.stage, 2);
   assert.equal(donate('threshold-4', 149).pumpkin.stage, 2);
-  assert.equal(donate('threshold-5', 1).pumpkin.stage, 3);
-  assert.equal(donate('threshold-6', 249).pumpkin.stage, 3);
+  assert.equal(donate('threshold-5', 1).pumpkin.stage, 2);
+  assert.equal(donate('threshold-6', 249).pumpkin.stage, 2);
   assert.equal(donate('threshold-7', 1).pumpkin.stage, 4);
   db.close();
 });
@@ -355,7 +356,7 @@ test('donation spawn gates and provider identities preserve legacy owners and de
   assert.equal(db.listPumpkins().length, 2);
   const created = service.handle({ ...donor, id: 'shared-event-id', amount: 100, message: '  !SPAWN witch рожки' });
   assert.equal(created.spawned, true);
-  assert.equal(created.pumpkin.customization.skin, 'witch');
+  assert.equal(created.pumpkin.customization.skin, 'classic');
   assert.equal(created.pumpkin.customization.hat, 'none');
   assert.equal(service.handle({ ...donor, id: 'shared-event-id', amount: 100, message: '!spawn ghost' }).duplicate, true);
   const existingOwner = service.handle({ ...donor, id: 'existing-owner', amount: 25, message: '' });
@@ -366,7 +367,7 @@ test('donation spawn gates and provider identities preserve legacy owners and de
     ...donor, provider: 'memealerts', id: 'shared-event-id', amount: 100, message: '!spawn ghost',
   });
   assert.equal(otherProvider.spawned, true);
-  assert.equal(otherProvider.pumpkin.customization.skin, 'ghost');
+  assert.equal(otherProvider.pumpkin.customization.skin, 'classic');
   assert.equal(db.listPumpkins().length, 4);
   const legacyUpdate = service.handle({
     id: 'legacy-update', provider: 'donationalerts', ownerId: 'legacy-user', name: 'Legacy Viewer',
@@ -665,16 +666,16 @@ test('animation and growth settings persist and are broadcast through Socket.IO 
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
   assert.deepEqual(ioEvents.at(-1)[1].settings.growthThresholds, growthThresholds);
   assert.deepEqual(db.getSettings(config).growthThresholds, growthThresholds);
-  assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: true, stage4: true });
+  assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: false, stage4: true });
   const stageService = new DonationService({ db, config, idFactory: () => 'socket-stage-pumpkin' });
   stageService.handle({ id: 'socket-stage-donation', name: 'Socket Stage Viewer', amount: 1300, currency: 'RUB', message: '!тыковка' });
-  socketEvents.get('admin:settings:update')({ growthStages: { stage2: true, stage3: false, stage4: true } });
-  assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: false, stage4: true });
-  assert.equal(db.getPumpkin('socket-stage-pumpkin').stage, 2);
-  assert.ok(ioEvents.some(([event, payload]) => event === 'pumpkin:updated' && payload.pumpkin.id === 'socket-stage-pumpkin' && payload.pumpkin.stage === 2));
+  socketEvents.get('admin:settings:update')({ growthStages: { stage2: false, stage3: false, stage4: true } });
+  assert.deepEqual(db.getSettings(config).growthStages, { stage2: false, stage3: false, stage4: true });
+  assert.equal(db.getPumpkin('socket-stage-pumpkin').stage, 1);
+  assert.ok(ioEvents.some(([event, payload]) => event === 'pumpkin:updated' && payload.pumpkin.id === 'socket-stage-pumpkin' && payload.pumpkin.stage === 1));
   socketEvents.get('admin:settings:update')({ growthStages: { stage2: true, stage3: 0, stage4: true } });
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_growth_stages' }]);
-  assert.deepEqual(db.getSettings(config).growthStages, { stage2: true, stage3: false, stage4: true });
+  assert.deepEqual(db.getSettings(config).growthStages, { stage2: false, stage3: false, stage4: true });
   const growthMultipliers = { stage1: 0.5, stage2: 0.8, stage3: 1.15, stage4: 1.4 };
   socketEvents.get('admin:settings:update')({ growthMultipliers });
   assert.equal(ioEvents.at(-1)[0], 'settings:updated');
@@ -1046,11 +1047,11 @@ test('customization reward all mode applies every recognized change and keeps th
     rewardId: 'appearance',
     userId: 'viewer-all',
     userLogin: 'viewer-all',
-    input: 'stars eyes, sleepy eyes, ghost skin, witch hat, fangs',
+    input: 'stars eyes, sleepy eyes, classic skin, witch hat, fangs',
   });
 
   assert.equal(result.status, 'customization_applied');
-  assert.deepEqual(result.pumpkin.customization, { skin: 'ghost', eyes: 'sleepy', mouth: 'fangs', hat: 'witch', prop: 'cocoa_hands' });
+  assert.deepEqual(result.pumpkin.customization, { skin: 'classic', eyes: 'sleepy', mouth: 'fangs', hat: 'witch', prop: 'cocoa_hands' });
   db.close();
 });
 

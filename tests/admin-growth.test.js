@@ -2,16 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('growth settings render four isolated previews and save only valid cumulative thresholds', async () => {
+test('growth settings render three isolated previews and save only valid cumulative thresholds', async () => {
   const html = await readFile(new URL('../public/admin.html', import.meta.url), 'utf8');
   const source = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
-  for (const stage of [1, 2, 3, 4]) {
+  for (const stage of [1, 2, 4]) {
     assert.match(html, new RegExp(`id="growth-stage-${stage}-preview"`));
     assert.match(html, new RegExp(`data-growth-preview-stage="${stage}"`));
   }
-  for (const stage of [2, 3, 4]) assert.match(html, new RegExp(`id="growth-stage-enabled-${stage}"`));
-  for (const stage of [2, 3, 4]) assert.match(html, new RegExp(`id="growth-threshold-stage-${stage}"`));
-  for (const stage of [1, 2, 3, 4]) assert.match(html, new RegExp(`id="growth-multiplier-stage-${stage}"`));
+  for (const stage of [2, 4]) assert.match(html, new RegExp(`id="growth-stage-enabled-${stage}"`));
+  for (const stage of [2, 4]) assert.match(html, new RegExp(`id="growth-threshold-stage-${stage}"`));
+  for (const stage of [1, 2, 4]) assert.match(html, new RegExp(`id="growth-multiplier-stage-${stage}"`));
   assert.match(html, /id="save-growth-settings"/);
   assert.match(html, /id="growth-settings-state"[^>]*aria-live="polite"/);
   assert.match(source, /function renderGrowthStages\(/);
@@ -27,7 +27,7 @@ test('growth settings render four isolated previews and save only valid cumulati
   const end = source.indexOf('\nfunction ', start + 1);
   const renderer = source.slice(start, end);
   assert.match(renderer, /new PumpkinCharacter/);
-  assert.match(renderer, /for \(const stage of \[1, 2, 3, 4\]\)/);
+  assert.match(renderer, /for \(const stage of \[1, 2, 4\]\)/);
   assert.match(renderer, /destroy\(\)/);
   assert.doesNotMatch(renderer, /state\.socket|renderer\.sync|renderer\.update/);
 });

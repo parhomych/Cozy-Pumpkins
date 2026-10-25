@@ -1038,17 +1038,17 @@ test('server routes one normalized mocked donation from each provider through th
     clientOptions.donationalerts.onEvent(donationAlertsPayload);
     clientOptions.donationalerts.onEvent(donationAlertsPayload);
     signalHandlers.get('DonationCreated')({
-      id: sharedId, userId: 'dx-viewer', username: 'DonatEx Viewer', amount: 60, currency: 'RUB', message: '!тыковка witch',
+      id: sharedId, userId: 'dx-viewer', username: 'DonatEx Viewer', amount: 60, currency: 'RUB', message: '!тыковка sleepy',
     });
     clientOptions.memealerts.onEvent({
       reason: 'new',
-      data: { id: sharedId, user_id: 'ma-viewer', username: 'Meme Viewer', amount: 70, currency: 'RUB', type: 'currency', message: '!тыковка gold' },
+      data: { id: sharedId, user_id: 'ma-viewer', username: 'Meme Viewer', amount: 70, currency: 'RUB', type: 'currency', message: '!тыковка fangs' },
     });
 
     const pumpkins = db.listPumpkins();
     assert.equal(pumpkins.length, 3);
     assert.deepEqual(pumpkins.map(({ ownerKey }) => ownerKey).sort(), ['da:da-viewer', 'donatex:dx-viewer', 'memealerts:ma-viewer']);
-    assert.deepEqual(pumpkins.map(({ customization }) => customization.skin).sort(), ['classic', 'gold', 'witch']);
+    assert.deepEqual(pumpkins.map(({ customization }) => customization.skin), ['classic', 'classic', 'classic']);
     const daPumpkin = pumpkins.find(({ ownerKey }) => ownerKey === 'da:da-viewer');
     assert.equal(daPumpkin.customization.eyes, 'stars');
     assert.equal(daPumpkin.customization.mouth, 'jack');
