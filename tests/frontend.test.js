@@ -875,3 +875,133 @@ test('admin drag bounds allow the artwork to reach the bottom of the widget', as
   const source = await readFile(new URL('../public/js/admin-app.js', import.meta.url), 'utf8');
   assert.match(source, /const minY = height \+ padding; const maxY = SCENE_HEIGHT;/);
 });
+
+test('blinking guarantees eyes return to neutral scale and never freeze in squint on interruption', () => {
+  const eye = { style: { transform: '' }, scaleY: 1, scaleX: 1 };
+  const lid = { style: { opacity: '0' }, opacity: 0 };
+  const eyeList = [eye];
+  const lidList = [lid];
+
+  const killedTweens = [];
+  const mockGsap = {
+    set(target, vars) {
+      const items = Array.isArray(target) ? target : [target];
+      for (const item of items) {
+        if (vars.scaleY !== undefined) item.scaleY = vars.scaleY;
+        if (vars.scaleX !== undefined) item.scaleX = vars.scaleX;
+        if (vars.opacity !== undefined) item.opacity = vars.opacity;
+      }
+    },
+    killTweensOf(targets) {
+      killedTweens.push(...(Array.isArray(targets) ? targets : [targets]));
+    },
+    timeline(config = {}) {
+      const steps = [];
+      const tl = {
+        to(target, vars) {
+          steps.push({ type: 'to', target, vars });
+          return tl;
+        },
+        fromTo(target, fromVars, toVars) {
+          steps.push({ type: 'fromTo', target, fromVars, toVars });
+          return tl;
+        },
+        set(target, vars) {
+          steps.push({ type: 'set', target, vars });
+          return tl;
+        },
+        add(fn) {
+          steps.push({ type: 'add', fn });
+          return tl;
+        },
+        kill() {
+          tl._killed = true;
+        },
+        _complete() {
+          for (const step of steps) {
+            if (step.type === 'fromTo') {
+              mockGsap.set(step.target, step.toVars);
+              if (step.toVars.yoyo) {
+                mockGsap.set(step.target, step.fromVars);
+              }
+            } else if (step.type === 'to') {
+              mockGsap.set(step.target, step.vars);
+            } else if (step.type === 'set') {
+              mockGsap.set(step.target, step.vars);
+            } else if (step.type === 'add' && typeof step.fn === 'function') {
+              step.fn();
+            }
+          }
+          config.onComplete?.();
+        },
+      };
+      return tl;
+    },
+    to(target, vars) {
+      return {
+        kill() {},
+      };
+    },
+  };
+
+  const char = Object.create(PumpkinCharacter.prototype);
+  char._gsap = () => mockGsap;
+  char.root = {
+    querySelectorAll(sel) {
+      if (sel.includes('.eye-lid')) return lidList;
+      if (sel.includes('.eye')) return eyeList;
+      return [];
+    },
+  };
+  char.idleTweens = new Set();
+  char.actionTweens = new Set();
+  char.tweens = new Set();
+  char.idleTimers = new Set();
+  char.activeBlinkTween = null;
+  char._track = (t) => t;
+  char._trackIdle = (t) => t;
+  char._trackAction = (t) => t;
+  char._trackFor = (t) => t;
+  char._kill = (targets) => mockGsap.killTweensOf(targets);
+
+  // 1. Initial blink completes and restores neutral
+  const tl1 = char.blink();
+  assert.equal(eye.scaleY, 1);
+  assert.equal(lid.opacity, 0);
+  tl1._complete();
+  assert.equal(eye.scaleY, 1);
+  assert.equal(lid.opacity, 0);
+
+  // 2. Interrupted mid-blink: eye was left squashed at scaleY = 0.08
+  eye.scaleY = 0.08;
+  lid.opacity = 1;
+  const tl2 = char.blink();
+  assert.equal(eye.scaleY, 1, 'eyes must immediately reset to scaleY: 1 when a new blink begins');
+  assert.equal(lid.opacity, 0, 'lids must immediately reset to opacity: 0 when a new blink begins');
+  tl2._complete();
+  assert.equal(eye.scaleY, 1);
+  assert.equal(lid.opacity, 0);
+
+  // 3. stopAction resets eyes if interrupted mid-squash
+  eye.scaleY = 0.08;
+  lid.opacity = 1;
+  char.stopAction();
+  assert.equal(eye.scaleY, 1, 'stopAction must reset eyes to scaleY: 1');
+  assert.equal(lid.opacity, 0, 'stopAction must reset lids to opacity: 0');
+});
+
+test('shared character sets transformBox on overlays but not on individual eyes to preserve SVG origin positioning', () => {
+  const char = Object.create(PumpkinCharacter.prototype);
+  const face = { style: {}, setAttribute() {} };
+  const eyes = { style: {}, setAttribute() {} };
+  const mouth = { style: {}, setAttribute() {} };
+  const eyePart = { style: {} };
+  char.face = face;
+  char.eyes = eyes;
+  char.mouth = mouth;
+  char.root = { querySelectorAll: () => [eyePart] };
+  char._setFaceCoordinateSystem();
+  assert.equal(eyes.style.transformBox, 'fill-box');
+  assert.equal(mouth.style.transformBox, 'fill-box');
+  assert.equal(eyePart.style.transformBox, undefined, 'individual .eye must not have transformBox fill-box to avoid double origin offset during scaling');
+});

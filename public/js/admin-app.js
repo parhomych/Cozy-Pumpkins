@@ -196,7 +196,7 @@ function renderCustomizationCatalog(catalog = []) {
         const select = $(`[data-slot="${group.slot}"]`);
         if (select) select.value = item.value;
         const customization = { ...p.customization, [group.slot]: item.value };
-        patchPumpkin({ customization }, { persist: false });
+        patchPumpkin({ customization });
         toast(`Equipped ${item.label || item.value}`);
       };
       option.addEventListener('click', applyCatalogItem);
@@ -435,9 +435,25 @@ function selectPumpkin(id) { if (!state.pumpkins.has(id)) { state.selectedId = n
 function renderInspector() {
   const p = selected(); $('#inspector-empty').hidden = Boolean(p); $('#inspector-form').hidden = !p; $('#selected-stage').textContent = p ? `Stage ${p.stage}` : '—';
   if (!p) { $('#character-preview').replaceChildren(); state.previewCharacter?.destroy(); state.previewCharacter = null; return; }
-  $('#owner-name').textContent = displayName(p); $('#total-donated').textContent = `${Number(p.totalDonated || 0).toLocaleString()} ${p.currency || ''}`; $('#display-name').value = p.displayName || ''; $('#twitch-username').value = p.twitchUsername || ''; $('#show-display-name').checked = p.showDisplayName !== false;
-  const customization = p.customization || {}; for (const select of $$('[data-slot]')) select.value = customization[select.dataset.slot] || select.options[0]?.value;
-  state.previewCharacter?.destroy(); state.previewCharacter = new PumpkinCharacter({ ...p, x: 110, y: 150 }, { interactive: false, positioning: 'local', previewSize: 130, animationSettings: state.settings.animation, growthMultipliers: state.settings.growthMultipliers }); state.previewCharacter.setPositionImmediate(110, 150, false); $('#character-preview').append(state.previewCharacter.root); state.previewCharacter.startIdle();
+  $('#owner-name').textContent = displayName(p); $('#total-donated').textContent = `${Number(p.totalDonated || 0).toLocaleString()} ${p.currency || ''}`;
+  if (document.activeElement !== $('#display-name')) $('#display-name').value = p.displayName || '';
+  if (document.activeElement !== $('#twitch-username')) $('#twitch-username').value = p.twitchUsername || '';
+  $('#show-display-name').checked = p.showDisplayName !== false;
+  const customization = p.customization || {};
+  for (const select of $$('[data-slot]')) {
+    if (document.activeElement !== select) select.value = customization[select.dataset.slot] || select.options[0]?.value;
+  }
+  if (state.previewCharacter && state.previewCharacter.data?.id === p.id) {
+    state.previewCharacter.data = { ...p };
+    state.previewCharacter.applyCustomization(p.customization || {});
+  } else {
+    $('#character-preview').replaceChildren();
+    state.previewCharacter?.destroy();
+    state.previewCharacter = new PumpkinCharacter({ ...p, x: 110, y: 150 }, { interactive: false, positioning: 'local', previewSize: 130, animationSettings: state.settings.animation, growthMultipliers: state.settings.growthMultipliers });
+    state.previewCharacter.setPositionImmediate(110, 150, false);
+    $('#character-preview').append(state.previewCharacter.root);
+    state.previewCharacter.startIdle();
+  }
 }
 function renderAnimationSettings() { const animation = { ...DEFAULT_ANIMATION, ...(state.settings.animation || {}) }; $('#eye-frequency').value = animation.eyeFrequency; $('#mouth-frequency').value = animation.mouthFrequency; renderer.setSettings({ animation }); state.previewCharacter?.setAnimationSettings(animation).restartIdle(); renderNameSettings(); }
 function normalizeTowerAnimation(value = {}, fallback = DEFAULT_TOWER_ANIMATION) {
@@ -751,7 +767,13 @@ function patchPumpkin(patch, { persist = true } = {}) {
     state.previewCharacter.data = next;
     state.previewCharacter.applyCustomization(next.customization);
   }
-  if (persist) state.socket?.emit('admin:pumpkin:update', { id: p.id, patch });
+  if (persist) {
+    if (state.socket?.connected) {
+      state.socket.emit('admin:pumpkin:update', { id: p.id, patch });
+    } else {
+      toast('Unable to save changes while disconnected.');
+    }
+  }
 }
 function beginDrag(id, event) {
   if (state.drag || event.button !== undefined && event.button !== 0) return; const p = state.pumpkins.get(id); if (!p) return; event.preventDefault(); event.stopPropagation(); selectPumpkin(id);
@@ -837,7 +859,28 @@ function wireUI() {
   });
   $('#save-reward-mapping').addEventListener('click', saveRewardMapping); $$('[data-reward-action]').forEach((select) => select.addEventListener('change', handleRewardMappingChange)); $('#save-neighbor-stack-animation').addEventListener('click', saveNeighborStackAnimationSettings); $('[data-reward-action="pumpkin_customization"]').addEventListener('change', renderCustomizationRewardStatus); $('#refresh-twitch-rewards').addEventListener('click', () => void loadTwitchRewards()); $('#test-pumpkin-tower').addEventListener('click', () => void testPumpkinTower());
   $$('.provider-action').forEach((button) => button.addEventListener('click', () => providerAction(button.dataset.provider, button.dataset.connected === 'true')));
-  $$('#inspector-form [data-slot]').forEach((select) => select.addEventListener('change', () => { const p = selected(); if (!p) return; const customization = { ...p.customization, [select.dataset.slot]: select.value }; patchPumpkin({ customization }, { persist: false }); }));
+  $$('#inspector-form [data-slot]').forEach((select) => select.addEventListener('change', () => {
+    const p = selected();
+    if (!p) return;
+    const customization = { ...p.customization, [select.dataset.slot]: select.value };
+    patchPumpkin({ customization });
+  }));
+  $('#display-name').addEventListener('change', () => {
+    const p = selected();
+    if (!p) return;
+    const name = $('#display-name').value.trim();
+    if (!name) {
+      $('#display-name').value = p.displayName || '';
+      return;
+    }
+    patchPumpkin({ displayName: name });
+  });
+  $('#twitch-username').addEventListener('change', () => {
+    const p = selected();
+    if (!p) return;
+    const username = $('#twitch-username').value.trim() || null;
+    patchPumpkin({ twitchUsername: username });
+  });
   $('#show-display-name').addEventListener('change', () => {
     const p = selected();
     const checkbox = $('#show-display-name');

@@ -69,6 +69,7 @@ export class PumpkinCharacter {
     this.idleTweens = new Set();
     this.actionTweens = new Set();
     this.lastMoveSequence = -1;
+    this.activeBlinkTween = null;
 
     this._applyStageGeometry(this.data.stage);
     this._refreshNameLabel();
@@ -707,6 +708,10 @@ export class PumpkinCharacter {
   stopIdle() {
     for (const timer of this.idleTimers) clearTimeout(timer);
     this.idleTimers.clear();
+    if (this.activeBlinkTween) {
+      this.activeBlinkTween.kill?.();
+      this.activeBlinkTween = null;
+    }
     for (const tween of this.idleTweens) tween.kill?.();
     this.idleTweens.clear();
 
@@ -748,16 +753,45 @@ export class PumpkinCharacter {
   blink(doubleBlink = false, { idle = false } = {}) {
     const gsap = this._gsap();
     // Blink eye groups, rather than every path in .face (which would squash the mouth too).
-    const eyes = this.root.querySelectorAll('.eyes .eye');
-    const lids = this.root.querySelectorAll('.eyes .eye-lid');
+    const eyes = this.root?.querySelectorAll?.('.eyes .eye') || [];
+    const lids = this.root?.querySelectorAll?.('.eyes .eye-lid') || [];
     if (!gsap || !eyes.length) return this;
-    const repeats = doubleBlink ? 3 : 1;
+    if (this.activeBlinkTween) {
+      this.activeBlinkTween.kill?.();
+      this.activeBlinkTween = null;
+    }
     this._kill([...eyes, ...lids]);
-    const tween = gsap.timeline({ defaults: { overwrite: 'auto' } });
-    tween.to(lids, { opacity: 1, duration: .07, ease: 'power1.in' })
-      .to(eyes, { scaleY: .08, duration: .09, yoyo: true, repeat: repeats, transformOrigin: '50% 50%', ease: 'power1.inOut' })
-      .to(lids, { opacity: 0, duration: .08, ease: 'power1.out' });
-    return this._trackFor(tween, { idle });
+    gsap.set(eyes, { scaleY: 1, scaleX: 1, transformOrigin: '50% 50%' });
+    if (lids.length) gsap.set(lids, { opacity: 0 });
+
+    const repeats = doubleBlink ? 3 : 1;
+    let timeline;
+    const resetEyes = () => {
+      gsap.set(eyes, { scaleY: 1, scaleX: 1 });
+      if (lids.length) gsap.set(lids, { opacity: 0 });
+      if (this.activeBlinkTween === timeline) {
+        this.activeBlinkTween = null;
+      }
+    };
+    timeline = gsap.timeline({
+      defaults: { overwrite: 'auto' },
+      onComplete: resetEyes,
+      onInterrupt: resetEyes,
+    });
+    if (lids.length) {
+      timeline.to(lids, { opacity: 1, duration: .07, ease: 'power1.in' });
+    }
+    timeline.fromTo(eyes,
+      { scaleY: 1, scaleX: 1, transformOrigin: '50% 50%' },
+      { scaleY: .08, duration: .09, yoyo: true, repeat: repeats, transformOrigin: '50% 50%', ease: 'power1.inOut' },
+    );
+    if (lids.length) {
+      timeline.to(lids, { opacity: 0, duration: .08, ease: 'power1.out' });
+      timeline.set(lids, { opacity: 0 });
+    }
+    timeline.set(eyes, { scaleY: 1, scaleX: 1 });
+    this.activeBlinkTween = timeline;
+    return this._trackFor(timeline, { idle });
   }
 
   wink(options = {}) { return this.blink(false, options); }
@@ -798,7 +832,18 @@ export class PumpkinCharacter {
       vars = { y: randomBetween(-1.5, 1.5), transformOrigin: 'center center', ...vars };
     }
     if (!target || !target.length && !target.nodeType) return this;
-    const tween = gsap.to(target, vars);
+    const reset = () => {
+      if (eyeClass === 'eyes-sleepy') gsap.set(this.eyes, { scaleY: 1, y: 0 });
+      else if (eyeClass === 'eyes-stars') gsap.set(target, { scale: 1 });
+      else if (eyeClass === 'eyes-hypno') gsap.set(this.eyes, { rotation: 0 });
+      else if (eyeClass === 'eyes-sly') gsap.set(this.face, { rotation: 0 });
+      else gsap.set(this.eyes, { y: 0 });
+    };
+    const tween = gsap.to(target, {
+      ...vars,
+      onComplete: reset,
+      onInterrupt: reset,
+    });
     return this._trackFor(tween, { idle });
   }
 
@@ -872,10 +917,20 @@ export class PumpkinCharacter {
   }
 
   stopAction() {
+    if (this.activeBlinkTween) {
+      this.activeBlinkTween.kill?.();
+      this.activeBlinkTween = null;
+    }
     for (const tween of this.actionTweens) tween.kill?.();
     this.actionTweens.clear();
     const gsap = this._gsap();
-    if (gsap && this.actor) gsap.set(this.actor, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+    if (gsap) {
+      if (this.actor) gsap.set(this.actor, { x: 0, y: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      const eyeParts = this.root?.querySelectorAll?.('.eyes .eye') || [];
+      const eyeLids = this.root?.querySelectorAll?.('.eyes .eye-lid') || [];
+      if (eyeParts.length) gsap.set(eyeParts, { scaleX: 1, scaleY: 1 });
+      if (eyeLids.length) gsap.set(eyeLids, { opacity: 0 });
+    }
     return this;
   }
 
@@ -903,6 +958,9 @@ export class PumpkinCharacter {
     };
     this.stopAction();
     if (!gsap) {
+      if (Number(index) === 0) {
+        this._triggerLanding();
+      }
       finish();
       return this;
     }
@@ -917,7 +975,17 @@ export class PumpkinCharacter {
       .to(position, { x, y: jumpY, duration: .34, ease: 'power2.out', onUpdate: () => this._setPosition(position.x, position.y) }, '<')
       .to(this.actor, { scaleX: .86, scaleY: 1.18, duration: .16, transformOrigin: '50% 100%', ease: 'power1.out' })
       .to(position, { x, y, duration: .46 + Math.min(.22, index * .03), ease: 'power2.in', onUpdate: () => this._setPosition(position.x, position.y) })
-      .to(this.actor, { scaleX: 1.06, scaleY: .94, duration: .1, transformOrigin: '50% 100%' })
+      .to(this.actor, {
+        scaleX: 1.06,
+        scaleY: .94,
+        duration: .1,
+        transformOrigin: '50% 100%',
+        onStart: () => {
+          if (Number(index) === 0) {
+            this._triggerLanding();
+          }
+        },
+      })
       .to(this.actor, { scaleX: 1, scaleY: 1, rotation: lean, duration: .18, ease: 'back.out(1.5)' });
     if (amplitude > 0 && !coordinated) timeline.to(this.actor, { rotation: lean + amplitude * (index % 2 ? -1 : 1), duration: .32, ease: 'sine.inOut', yoyo: true, repeat: 2 });
     void towerSwayDelay; void towerSwayDuration; void coordinated;
@@ -1009,6 +1077,10 @@ export class PumpkinCharacter {
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this.activeBlinkTween) {
+      this.activeBlinkTween.kill?.();
+      this.activeBlinkTween = null;
+    }
     this.stopIdle();
     this.stopAction();
     const gsap = this._gsap();

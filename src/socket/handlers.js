@@ -32,6 +32,11 @@ export function attachSocketHandlers(io, { config, db, statuses, logger = consol
       }
       const patch = {};
       if (value.customization) patch.customization = sanitizeCustomization(value.customization, p.customization);
+      if (value.displayName !== undefined) {
+        const name = normalizeText(value.displayName, 128);
+        if (!name) return socket.emit('operation:error', { operation: 'pumpkin-update', message: 'invalid_display_name' });
+        patch.displayName = name;
+      }
       if (value.twitchUsername !== undefined) patch.twitchUsername = normalizeName(value.twitchUsername) || null;
       if (value.twitchUserId !== undefined) patch.twitchUserId = normalizeText(value.twitchUserId, 128) || null;
       if (value.showDisplayName !== undefined) patch.showDisplayName = value.showDisplayName;

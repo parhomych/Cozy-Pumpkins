@@ -10,6 +10,7 @@ import {
   landingParticlesPatch,
 } from '../src/engine/landing-particles.js';
 import { PumpkinCharacter } from '../public/js/shared/pumpkin-character.js';
+import { PumpkinRenderer } from '../public/js/shared/pumpkin-renderer.js';
 import { LeafParticleSystem } from '../public/js/shared/leaf-particles.js';
 
 test('landing particles engine validates limits, defaults and patches', () => {
@@ -156,6 +157,28 @@ test('pumpkin character landing callback fires on hop and roll squash', () => {
     assert.equal(typeof fallLandingSquash.vars.onStart, 'function');
     fallLandingSquash.vars.onStart();
     assert.equal(landEvents, 3);
+
+    // Verify stack() landing squash starts the callback for index === 0 (base pumpkin)
+    mockTimeline.tweens = [];
+    character.stack(500, 1080, 0, 2);
+    const stackLandingSquash = mockTimeline.tweens.find(
+      (t) => t.target === character.actor && t.vars.scaleX === 1.06,
+    );
+    assert.ok(stackLandingSquash, 'landing squash tween exists in stack for base pumpkin');
+    assert.equal(typeof stackLandingSquash.vars.onStart, 'function');
+    stackLandingSquash.vars.onStart();
+    assert.equal(landEvents, 4);
+
+    // Verify stack() for index > 0 does NOT trigger landing
+    mockTimeline.tweens = [];
+    character.stack(500, 989, 1, 2);
+    const topStackSquash = mockTimeline.tweens.find(
+      (t) => t.target === character.actor && t.vars.scaleX === 1.06,
+    );
+    assert.ok(topStackSquash, 'landing squash tween exists in stack for top pumpkin');
+    assert.equal(typeof topStackSquash.vars.onStart, 'function');
+    topStackSquash.vars.onStart();
+    assert.equal(landEvents, 4, 'top pumpkin in stack does not trigger landing callback');
   } finally {
     globalThis.gsap = prevGsap;
   }
@@ -249,4 +272,103 @@ test('admin HTML exposes landing particles panel with on/off and quantity contro
   assert.match(adminApp, /test-spawn-particles/);
   assert.match(adminApp, /renderLandingParticlesSettings/);
   assert.match(adminApp, /saveLandingParticlesSettings/);
+});
+
+test('neighbor stack base pumpkin triggers landing leaves when moving or forming stack', () => {
+  const bursts = [];
+  const renderer = Object.create(PumpkinRenderer.prototype);
+  renderer.settings = { landingParticles: { enabled: true } };
+  renderer.spawnLeafBurst = (x, y, options) => {
+    bursts.push({ x, y, options });
+  };
+  let baseLandTriggered = 0;
+  let topLandTriggered = 0;
+
+  const baseChar = {
+    id: 'base',
+    x: 500,
+    y: 1080,
+    stageSize: 120,
+    stageScale: 1,
+    data: { id: 'base', x: 500, y: 1080 },
+    _triggerLanding() {
+      baseLandTriggered += 1;
+      renderer.onPumpkinLand(this);
+    },
+    setTowerPose(x, y) { this.x = x; this.y = y; },
+  };
+  const topChar = {
+    id: 'top',
+    x: 500,
+    y: 989,
+    stageSize: 120,
+    stageScale: 1,
+    data: { id: 'top', x: 500, y: 989 },
+    _triggerLanding() {
+      topLandTriggered += 1;
+      renderer.onPumpkinLand(this);
+    },
+    setTowerPose(x, y) { this.x = x; this.y = y; },
+  };
+
+  renderer.characters = new Map([['base', baseChar], ['top', topChar]]);
+  renderer.joinedStackRecords = new Map([['test-stack', {
+    stackId: 'test-stack',
+    animation: {},
+    participants: [
+      { id: 'base', level: 0, x: 500, y: 1080 },
+      { id: 'top', level: 1, x: 500, y: 989 },
+    ],
+  }]]);
+  renderer.joinedStackMoveTweens = new Map();
+  renderer._bringToFront = () => {};
+
+  // Test with GSAP animation onComplete
+  let moveTween = null;
+  const prevGsap = globalThis.gsap;
+  globalThis.gsap = {
+    to(target, options) {
+      moveTween = { target, options };
+      return { kill() {} };
+    },
+    fromTo() {},
+  };
+
+  try {
+    renderer.moveNeighborStack({
+      stackId: 'test-stack',
+      roamingSpeed: 140,
+      members: [
+        { id: 'base', level: 0, x: 650, y: 1080 },
+        { id: 'top', level: 1, x: 650, y: 989 },
+      ],
+    });
+    assert.ok(moveTween, 'motion tween started');
+    assert.equal(baseLandTriggered, 0, 'no landing yet during movement');
+
+    moveTween.target.progress = 1;
+    moveTween.options.onComplete();
+
+    assert.equal(baseLandTriggered, 1, 'base pumpkin landed after stack movement');
+    assert.equal(topLandTriggered, 0, 'top pumpkin did not trigger landing');
+    assert.equal(bursts.length, 1, 'leaf burst triggered for base pumpkin');
+    assert.equal(bursts[0].x, 650);
+    assert.equal(bursts[0].y, 1080);
+
+    // Test fallback when no gsap is available
+    delete globalThis.gsap;
+    renderer.moveNeighborStack({
+      stackId: 'test-stack',
+      roamingSpeed: 140,
+      members: [
+        { id: 'base', level: 0, x: 750, y: 1080 },
+        { id: 'top', level: 1, x: 750, y: 989 },
+      ],
+    });
+    assert.equal(baseLandTriggered, 2, 'base pumpkin landed in immediate/no-gsap move');
+    assert.equal(bursts.length, 2);
+    assert.equal(bursts[1].x, 750);
+  } finally {
+    globalThis.gsap = prevGsap;
+  }
 });

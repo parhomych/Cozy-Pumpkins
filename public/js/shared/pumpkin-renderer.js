@@ -130,23 +130,23 @@ export class PumpkinRenderer {
     return this;
   }
   onPumpkinLand(character) {
-    if (!character || this.settings.landingParticles?.enabled === false) return;
+    if (!character || this.settings?.landingParticles?.enabled === false) return;
     this.spawnLeafBurst(character.x, character.y, {
       stageScale: character.stageScale || 1,
     });
   }
   spawnLeafBurst(x, y, options = {}) {
-    if (this.settings.landingParticles?.enabled === false && !options.force) return;
+    if (this.settings?.landingParticles?.enabled === false && !options.force) return;
     const config = {
-      ...this.settings.landingParticles,
+      ...this.settings?.landingParticles,
       ...options,
     };
     this.leafParticles?.spawnBurst(x, y, config);
   }
   spawnLeafDrift(x, y, options = {}) {
-    if (this.settings.landingParticles?.enabled === false && !options.force) return;
+    if (this.settings?.landingParticles?.enabled === false && !options.force) return;
     const config = {
-      ...this.settings.landingParticles,
+      ...this.settings?.landingParticles,
       ...options,
     };
     this.leafParticles?.spawnDrift(x, y, config);
@@ -415,6 +415,14 @@ export class PumpkinRenderer {
       stack.roamingOffsetX = 0;
       stack.roamingOffsetY = 0;
       this._applyNeighborStackPose(stack, Number(stack.swayAngle) || 0);
+      const baseCharacter = this.characters.get(base.id);
+      if (baseCharacter) {
+        if (typeof baseCharacter._triggerLanding === 'function') {
+          baseCharacter._triggerLanding();
+        } else {
+          this.onPumpkinLand(baseCharacter);
+        }
+      }
       return true;
     }
     const motion = { progress: 0 };
@@ -433,6 +441,20 @@ export class PumpkinRenderer {
         stack.roamingOffsetY = 0;
         this.joinedStackMoveTweens.delete(stack.stackId);
         this._applyNeighborStackPose(stack, Number(stack.swayAngle) || 0);
+        const baseCharacter = this.characters.get(base.id);
+        if (baseCharacter) {
+          if (baseCharacter.actor && typeof gsap.fromTo === 'function') {
+            gsap.fromTo(baseCharacter.actor,
+              { scaleX: 1.1, scaleY: 0.9 },
+              { scaleX: 1, scaleY: 1, duration: 0.2, ease: 'back.out(1.5)' }
+            );
+          }
+          if (typeof baseCharacter._triggerLanding === 'function') {
+            baseCharacter._triggerLanding();
+          } else {
+            this.onPumpkinLand(baseCharacter);
+          }
+        }
       },
     });
     this.joinedStackMoveTweens.set(stack.stackId, tween);
@@ -463,6 +485,13 @@ export class PumpkinRenderer {
       });
       if (!character.stack) {
         character.setPositionImmediate?.(item.x, item.y, false);
+        if (Number(item.level) === 0) {
+          if (typeof character._triggerLanding === 'function') {
+            character._triggerLanding();
+          } else {
+            this.onPumpkinLand(character);
+          }
+        }
         startSway();
       }
     }

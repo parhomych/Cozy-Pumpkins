@@ -1134,6 +1134,15 @@ test('pumpkin name visibility defaults on, persists, and is included in the init
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'settings-update', message: 'invalid_pumpkin_name_font_size' }]);
   socketEvents.get('admin:pumpkin:update')({ id: result.pumpkin.id, patch: { showDisplayName: true } });
   assert.equal(ioEvents.findLast(([event]) => event === 'pumpkin:updated')?.[1]?.pumpkin.showDisplayName, true);
+  socketEvents.get('admin:pumpkin:update')({ id: result.pumpkin.id, patch: { customization: { hat: 'witch', eyes: 'stars' } } });
+  const updatedCust = ioEvents.findLast(([event]) => event === 'pumpkin:updated')?.[1]?.pumpkin;
+  assert.equal(updatedCust?.customization?.hat, 'witch');
+  assert.equal(updatedCust?.customization?.eyes, 'stars');
+  assert.equal(db.getPumpkin(result.pumpkin.id).customization.hat, 'witch');
+  socketEvents.get('admin:pumpkin:update')({ id: result.pumpkin.id, patch: { displayName: 'Updated Spooky Name' } });
+  const updatedName = ioEvents.findLast(([event]) => event === 'pumpkin:updated')?.[1]?.pumpkin;
+  assert.equal(updatedName?.displayName, 'Updated Spooky Name');
+  assert.equal(db.getPumpkin(result.pumpkin.id).displayName, 'Updated Spooky Name');
   socketEvents.get('admin:pumpkin:update')({ id: result.pumpkin.id, patch: { showDisplayName: 'false' } });
   assert.deepEqual(ioEvents.at(-1), ['socket', 'operation:error', { operation: 'pumpkin-update', message: 'invalid_show_display_name' }]);
   db.close();
